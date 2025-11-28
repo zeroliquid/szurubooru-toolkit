@@ -2,6 +2,8 @@
 
 # Set default safety level from command line argument or use "safe" as fallback
 DEFAULT_SAFETY="safe"
+EXTRA_TAGS=""
+
 if [[ $# -ge 1 ]]; then
     case "${1,,}" in
         safe|sketchy|unsafe)
@@ -12,6 +14,11 @@ if [[ $# -ge 1 ]]; then
             echo "Valid options: safe, sketchy, unsafe"
             ;;
     esac
+fi
+
+# Accept raw tag string EXACTLY as passed
+if [[ $# -ge 2 ]]; then
+    EXTRA_TAGS="$2"
 fi
 
 while true; do
@@ -37,13 +44,19 @@ while true; do
   fi
   read -p "Are there potential related pictures? [y/N] (default: N): " potential_rels
 
-  # Set tags based on potential_rels response
+  # Always start with these
+  tags="tagme"
+
   if [[ "$potential_rels" =~ ^[Yy]$ ]]; then
-      tags="tagme,potential_rels"
-      echo "Using tags: tagme,potential_rels"
-  else
-      tags="tagme"
-      echo "Using tags: tagme"
+      tags="$tags,potential_rels"
   fi
+
+  # Append raw CLI tags exactly as provided
+  if [[ -n "$EXTRA_TAGS" ]]; then
+      tags="$tags,$EXTRA_TAGS"
+  fi
+
+  echo "Using tags: $tags"
+
   uv run szuru-toolkit --log-level DEBUG import-from-url --default-safety "$safety_level" --add-tags "$tags" "$input_url"
 done
