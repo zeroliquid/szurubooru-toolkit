@@ -43,7 +43,7 @@ def setup_logger() -> None:
                 backtrace=False,
                 diagnose=False,
                 colorize=True,
-                level='INFO',
+                level='DEBUG',
                 filter=lambda record: record['level'].no < 30,
                 format='<le>[{level}]</le> {message}',
             ),
