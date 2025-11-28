@@ -11,6 +11,9 @@ token = "None"
 [credentials.sankaku]
 username = "None"
 password = "None"
+[credentials.gelbooru]
+api_key = "None"
+user_id = "None"
 
 [logging]
 log_enabled = false
