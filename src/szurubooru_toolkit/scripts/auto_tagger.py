@@ -203,6 +203,7 @@ def main(  # noqa C901
                 total=int(total_posts),
             ),
         ):
+            original_safety = post.safety
             # Search boorus by md5 hash of the file
             if config.auto_tagger['md5_search']:
                 if md5:
@@ -300,6 +301,10 @@ def main(  # noqa C901
                 [post.tags.remove(tag) for tag in post.tags if tag == 'tagme']
             else:
                 post.tags.append('tagme')
+
+            if not config.auto_tagger['update_safety']:
+                logger.debug(f'Using original rating {original_safety}')
+                post.safety = original_safety
 
             szuru.update_post(post)
 
