@@ -34,6 +34,7 @@ default_safety = "safe"
 use_pixiv_artist = false
 use_pixiv_tags = false
 update_relations = true
+update_safety = true
 hide_progress = false
 limit = 0
 
