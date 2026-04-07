@@ -482,6 +482,7 @@ def prepare_post(results: dict, config: Config) -> tuple[list[str], list[str], s
     booru_found = False
     pixiv_rating = None
     pixiv_artist = None
+    pixiv_artist_id = None
     for booru, result in results.items():
         if booru != 'pixiv':
             if booru == 'sankaku':
@@ -503,6 +504,9 @@ def prepare_post(results: dict, config: Config) -> tuple[list[str], list[str], s
                         pixiv_tags = pixiv.get_tags(pixiv_result)
                         tags.append(convert_tags(pixiv_tags))
                         pixiv_rating = pixiv.get_rating(pixiv_result)
+                        if pixiv_result.illust and pixiv_result.illust.user:
+                            pixiv_artist_id = pixiv_result.illust.user.id
+                            logger.debug(f'Pixiv artist id: {pixiv_artist_id}')
                     else:
                         pixiv_rating = None
                 except PixivError as e:
@@ -513,7 +517,7 @@ def prepare_post(results: dict, config: Config) -> tuple[list[str], list[str], s
                 tags = pixiv_tags
 
             sources.append(results['pixiv'].url)
-            pixiv_artist = Pixiv.extract_pixiv_artist(results['pixiv'].author_name)
+            pixiv_artist = Pixiv.extract_pixiv_artist(results['pixiv'].author_name, pixiv_artist_id)
             if pixiv_artist:
                 tags.append([pixiv_artist])
 
