@@ -42,6 +42,7 @@ def set_tags(metadata: dict) -> list:
     """
 
     artist = ''
+    artist_id = None
     allow_tags_for_sites = ['sankaku', 'danbooru', 'gelbooru', 'konachan', 'yandere', 'fanbox', 'pixiv', 'twitter']
 
     if metadata['site'] in allow_tags_for_sites:
@@ -72,11 +73,12 @@ def set_tags(metadata: dict) -> list:
         elif metadata['site'] in ['fanbox', 'pixiv']:
             try:
                 artist = metadata['user']['name']
+                artist_id = metadata['user']['id']
             except KeyError:
                 pass
 
         if artist:
-            canon_artist = Pixiv.extract_pixiv_artist(artist)
+            canon_artist = Pixiv.extract_pixiv_artist(artist, artist_id)
             if canon_artist:
                 metadata['tags'].append(canon_artist)
 

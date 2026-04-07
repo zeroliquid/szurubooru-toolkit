@@ -115,7 +115,7 @@ class Pixiv:
         return 'safe'
 
     @classmethod
-    def extract_pixiv_artist(cls, pixiv_artist: str) -> str:
+    def extract_pixiv_artist(cls, pixiv_artist: str, pixiv_artist_id: int | None = None) -> str:
         """
         Extracts the Pixiv artist name and checks if it exists on Danbooru.
 
@@ -126,6 +126,7 @@ class Pixiv:
 
         Args:
             pixiv_artist (str): The Pixiv artist name to extract.
+            pixiv_artist_id (str, optional): Pixiv artist ID. 
 
         Returns:
             str: The artist name if it exists on Danbooru or the sanitized Pixiv artist name otherwise.
@@ -139,7 +140,11 @@ class Pixiv:
         from szurubooru_toolkit import szuru
 
         if pixiv_artist:
-            artist_danbooru = danbooru.search_artist(pixiv_artist)
+            artist_danbooru = ''
+            if pixiv_artist_id:
+                artist_danbooru = danbooru.search_artist(f'users/{pixiv_artist_id}', by_url=True)
+            if not artist_danbooru:
+                artist_danbooru = danbooru.search_artist(pixiv_artist)
 
             artist_pixiv_sanitized = pixiv_artist.lower().replace(' ', '_')
             # Sometimes \3000 gets appended from the result for whatever reason

@@ -183,7 +183,7 @@ class Danbooru:
 
         return result_rating
 
-    def search_artist(self, artist: str) -> str:
+    def search_artist(self, artist: str, by_url: bool = False) -> str:
         """
         Search for the main artist name on Danbooru and return it.
 
@@ -194,6 +194,7 @@ class Danbooru:
 
         Args:
             artist (str): The artist name. Can be an alias as well.
+            by_url (bool): Seach by URL. 
 
         Returns:
             str: The main artist name if found, None otherwise.
@@ -211,6 +212,8 @@ class Danbooru:
                 else:
                     search_url = (
                         f'https://danbooru.donmai.us/artists.json?search[any_other_name_like]={artist.lower()}&search[is_deleted]=false'
+                    ) if not by_url else (
+                        f'https://danbooru.donmai.us/artists.json?search[url_matches]={artist.lower()}&search[is_deleted]=false'
                     )
                     artist = self.session.get(search_url).json()[0]['name']
                     self.session.close()
