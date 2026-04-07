@@ -502,7 +502,7 @@ def prepare_post(results: dict, config: Config) -> tuple[list[str], list[str], s
                     pixiv_result = pixiv.get_result(results['pixiv'].url)
                     if pixiv_result:
                         pixiv_tags = pixiv.get_tags(pixiv_result)
-                        tags.append(convert_tags(pixiv_tags))
+                        # tags.append(convert_tags(pixiv_tags))
                         pixiv_rating = pixiv.get_rating(pixiv_result)
                         if pixiv_result.illust and pixiv_result.illust.user:
                             pixiv_artist_id = pixiv_result.illust.user.id
