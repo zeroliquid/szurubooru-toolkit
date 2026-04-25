@@ -215,7 +215,19 @@ class Danbooru:
                     ) if not by_url else (
                         f'https://danbooru.donmai.us/artists.json?search[url_matches]={artist.lower()}&search[is_deleted]=false'
                     )
-                    artist = self.session.get(search_url).json()[0]['name']
+                    logger.debug(f"Looking up artist: {search_url}")
+                    artist_response = self.session.get(search_url).json()
+                    def score(artist_jsono):
+                        return (
+                            len(artist_jsono["other_names"]) * 3 +
+                            (1 if artist_jsono["group_name"] else 0) * 2 +
+                            (-int(artist_jsono["created_at"][:4]))  # older = better
+                        )
+
+                    artist = artist_response[0]['name']
+                    if len(artist_response)>1:
+                        logger.debug(f"Found {len(artist_response)} artists. Choosing by score.")
+                        artist = max(artist_response, key=score)['name']
                     self.session.close()
 
                 logger.debug(f'Returning artist: {artist}')
