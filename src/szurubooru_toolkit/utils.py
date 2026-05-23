@@ -458,6 +458,42 @@ def convert_tags(tags: list) -> list:
     return filtered_tags
 
 
+def append_source_suffix(tags: list, booru: str) -> list:
+    """
+    Append a source suffix to tags from non-Danbooru/Gelbooru boorus.
+
+    Args:
+        tags (list): The tags to suffix.
+        booru (str): The source booru name.
+
+    Returns:
+        list: Tags with the source suffix applied.
+    """
+
+    if booru in ('danbooru', 'gelbooru', 'donmai'):
+        return tags
+
+    return [f'{tag}_{booru}' for tag in tags]
+
+
+def ensure_tag_category(tags: list, category: str) -> None:
+    """
+    Ensure the provided tags exist in szurubooru with the given category.
+
+    Args:
+        tags (list): The tags to create or update.
+        category (str): The category to assign.
+    """
+
+    from szurubooru_toolkit import szuru
+
+    for tag in set(sanitize_tags(tags)):
+        try:
+            szuru.create_tag(tag, category=category, overwrite=True)
+        except Exception as e:
+            logger.debug(f'Could not ensure category {category} for tag {tag}: {e}')
+
+
 def prepare_post(results: dict, config: Config) -> tuple[list[str], list[str], str]:
     """
     Prepares a post for upload to szurubooru.
@@ -486,11 +522,15 @@ def prepare_post(results: dict, config: Config) -> tuple[list[str], list[str], s
     for booru, result in results.items():
         if booru != 'pixiv':
             if booru == 'sankaku':
-                tags.append([tag['tagName'] for tag in result[0]['tags']])
+                source_tags = append_source_suffix([tag['tagName'] for tag in result[0]['tags']], booru)
+                tags.append(source_tags)
+                ensure_tag_category(source_tags, category=booru)
                 sources.append(generate_src({'site': booru, 'id': result[0]['id']}))
                 rating = convert_rating(result[0]['rating'])
             else:
-                tags.append(result[0].tags.split())
+                source_tags = append_source_suffix(result[0].tags.split(), booru)
+                tags.append(source_tags)
+                ensure_tag_category(source_tags, category=booru)
                 sources.append(generate_src({'site': booru, 'id': result[0].id}))
                 rating = convert_rating(result[0].rating)
             booru_found = True
