@@ -524,13 +524,15 @@ def prepare_post(results: dict, config: Config) -> tuple[list[str], list[str], s
             if booru == 'sankaku':
                 source_tags = append_source_suffix([tag['tagName'] for tag in result[0]['tags']], booru)
                 tags.append(source_tags)
-                ensure_tag_category(source_tags, category=booru)
+                if booru not in ('danbooru', 'gelbooru', 'donmai'):
+                    ensure_tag_category(source_tags, category=booru)
                 sources.append(generate_src({'site': booru, 'id': result[0]['id']}))
                 rating = convert_rating(result[0]['rating'])
             else:
                 source_tags = append_source_suffix(result[0].tags.split(), booru)
                 tags.append(source_tags)
-                ensure_tag_category(source_tags, category=booru)
+                if booru not in ('danbooru', 'gelbooru', 'donmai'):
+                    ensure_tag_category(source_tags, category=booru)
                 sources.append(generate_src({'site': booru, 'id': result[0].id}))
                 rating = convert_rating(result[0].rating)
             booru_found = True
