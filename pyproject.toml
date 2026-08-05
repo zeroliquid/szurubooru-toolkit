@@ -30,6 +30,7 @@ dependencies = [
     "tqdm<5.0.0,>=4.65.0",
     "loguru<1.0.0,>=0.7.0",
     "gallery-dl<2.0.0,>=1.26.5",
+    "textual>=6.0,<7.0",
 ]
 name = "szurubooru-toolkit"
 version = "2.0.2"

@@ -4,6 +4,7 @@ import os
 import shutil
 from glob import glob
 from pathlib import Path
+from typing import Callable
 
 import httpx
 from loguru import logger
@@ -20,6 +21,16 @@ from szurubooru_toolkit.szurubooru import SzurubooruError
 from szurubooru_toolkit.utils import get_md5sum
 from szurubooru_toolkit.utils import run_concurrently
 from szurubooru_toolkit.utils import shrink_img
+
+
+UploadProgressCallback = Callable[[dict], None]
+
+
+def emit_upload_progress(callback: UploadProgressCallback | None, event: str, file_path: str | None, **details) -> None:
+    """Emit a structured upload event without making progress reporting mandatory."""
+
+    if callback:
+        callback({'event': event, 'file_path': file_path, **details})
 
 
 def get_files(upload_dir: str) -> list:
@@ -317,6 +328,7 @@ def upload_post(
     file_path: str = None,
     saucenao_limit_reached: bool = False,
     relations_batch: RelationsBatch = None,
+    progress_callback: UploadProgressCallback | None = None,
 ) -> tuple[bool, bool]:
     """
     Uploads given file to szurubooru and checks for similar posts.
@@ -340,6 +352,7 @@ def upload_post(
     post = Post()
     original_md5 = ''
     file_label = f'"{file_path}"' if file_path else 'in-memory media'
+    emit_upload_progress(progress_callback, 'checking', file_path)
 
     if file_ext not in ['mp4', 'webm', 'gif']:
         post.media, original_md5, updated_file_ext = eval_convert_image(file, file_ext, file_path)
@@ -352,11 +365,13 @@ def upload_post(
         # The upload failed and was already logged; a reverse search without a
         # token would only add a misleading MissingRequiredFileError (#78).
         logger.error(f'Failed to process {file_label}: the temporary upload did not return a content token.')
+        emit_upload_progress(progress_callback, 'failed', file_path, message='temporary upload did not return a content token')
         return False, saucenao_limit_reached
 
     exact_post, similar_posts, errors = check_similarity(szuru, post.token)
 
     if errors:
+        emit_upload_progress(progress_callback, 'failed', file_path, message='similarity check failed')
         return False, False  # Assume the saucenao_limit_reached is False
 
     threshold = 1 - float(config.upload_media['max_similarity'])
@@ -368,7 +383,9 @@ def upload_post(
 
     if exact_post:
         logger.info(f'Skipped {file_label}: it is an exact duplicate of existing post {exact_post["id"]}.')
+        emit_upload_progress(progress_callback, 'skipped_exact', file_path, post_id=exact_post['id'])
 
+    similar_match = None
     if not exact_post:
         for entry in similar_posts:
             if entry['distance'] < threshold:
@@ -378,6 +395,17 @@ def upload_post(
                     f'{entry["post"]["id"]}, above max_similarity {float(config.upload_media["max_similarity"]) * 100:.1f}%.',
                 )
                 existing_posts.append(entry)
+                if similar_match is None:
+                    similar_match = (entry['post']['id'], similarity)
+
+    if similar_match is not None:
+        emit_upload_progress(
+            progress_callback,
+            'skipped_similar',
+            file_path,
+            post_id=similar_match[0],
+            similarity=similar_match[1],
+        )
 
     if not existing_posts:
         if not metadata:
@@ -398,9 +426,11 @@ def upload_post(
         post_id = upload_file(szuru, post)
 
         if not post_id:
+            emit_upload_progress(progress_callback, 'failed', file_path, message='post creation failed')
             return False, saucenao_limit_reached
 
         logger.success(f'Uploaded {file_label} as post {post_id}.')
+        emit_upload_progress(progress_callback, 'uploaded', file_path, post_id=post_id)
 
         # Record similarity edges so the batch reconciliation can complete the
         # relation sets once all files are uploaded (earlier posts don't know
@@ -438,6 +468,7 @@ def main(
     file_path: str = None,
     saucenao_limit_reached: bool = False,
     relations_batch: RelationsBatch = None,
+    progress_callback: UploadProgressCallback | None = None,
 ) -> int:
     """
     Main logic of the script.
@@ -509,6 +540,7 @@ def main(
                         metadata=metadata,
                         file_path=file_path,
                         relations_batch=batch,
+                        progress_callback=progress_callback,
                     )
 
                     if config.upload_media['cleanup'] and success:
@@ -538,6 +570,7 @@ def main(
                     file_path=file_path,
                     saucenao_limit_reached=saucenao_limit_reached,
                     relations_batch=relations_batch,
+                    progress_callback=progress_callback,
                 )
 
             return saucenao_limit_reached

@@ -10,6 +10,7 @@ from dataclasses import field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+from typing import Callable
 
 from loguru import logger
 
@@ -299,13 +300,18 @@ def prepare_artwork_batches(
     return batches
 
 
-def upload_batches(batches: list[ArtworkBatch]) -> None:
+def upload_batches(
+    batches: list[ArtworkBatch],
+    progress_callback: Callable[[dict], None] | None = None,
+    hide_progress: bool | None = None,
+) -> None:
     """Upload every accepted page using already reviewed metadata."""
 
-    try:
-        hide_progress = config.globals['hide_progress']
-    except KeyError:
-        hide_progress = config.import_from_url['hide_progress']
+    if hide_progress is None:
+        try:
+            hide_progress = config.globals['hide_progress']
+        except KeyError:
+            hide_progress = config.import_from_url['hide_progress']
 
     relations_batch = RelationsBatch()
     jobs = [(batch, file_path) for batch in batches if batch.accepted for file_path in batch.file_paths]
@@ -313,14 +319,19 @@ def upload_batches(batches: list[ArtworkBatch]) -> None:
 
     def worker(job: tuple[ArtworkBatch, str]) -> None:
         batch, file_path = job
-        with open(file_path, 'rb') as media_file:
-            upload_media.main(
-                file_to_upload=media_file.read(),
-                file_ext=Path(file_path).suffix[1:],
-                metadata={'tags': batch.final_tags, 'safety': batch.safety, 'source': batch.source},
-                file_path=file_path,
-                relations_batch=relations_batch,
-            )
+        try:
+            with open(file_path, 'rb') as media_file:
+                upload_media.main(
+                    file_to_upload=media_file.read(),
+                    file_ext=Path(file_path).suffix[1:],
+                    metadata={'tags': batch.final_tags, 'safety': batch.safety, 'source': batch.source},
+                    file_path=file_path,
+                    relations_batch=relations_batch,
+                    progress_callback=progress_callback,
+                )
+        except Exception as error:
+            upload_media.emit_upload_progress(progress_callback, 'failed', file_path, message=str(error))
+            raise
 
     workers = max(1, int(config.import_from_url['workers']))
     run_concurrently(jobs, worker, workers, len(jobs), hide_progress)

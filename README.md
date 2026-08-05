@@ -257,15 +257,17 @@ This command downloads and prepares metadata before uploading anything. Pixiv pa
 
 Tags start selected and can all be removed. Labels distinguish tags mapped from source metadata, tags derived by the toolkit (such as an artist), tags added by configuration or command-line options, and tags entered during review. Safety can also be edited.
 
-Interactive imports default to `max_similarity = 1.0`: every non-exact image is uploaded, even if it closely resembles an earlier page. Exact file matches are still skipped. Press `m` on a review screen to change this policy for the current session, set `max_similarity` under `[interactive_import]`, or pass `--max-similarity 0.98` on the command line.
+The review interface is a persistent keyboard-driven TUI. Use the arrow keys to move through tags and Space to toggle the highlighted tag. Press `/` to focus the separate filter field, `A` to focus inline tag addition, `S` to cycle safety, `D` to switch duplicate handling, and `Ctrl+Enter` for the primary action. A `⚙` badge highlights tags derived or added by the toolkit; those tags remain removable like every other tag. The same controls are also mouse-accessible.
+
+Interactive imports default to `max_similarity = 1.0`: every non-exact image is uploaded, even if it closely resembles an earlier page. Exact file matches are still skipped. Duplicate handling and a custom threshold can be changed inline, configured with `max_similarity` under `[interactive_import]`, or set with `--max-similarity 0.98` on the command line.
 
 Two review modes are available:
 
-* `each` stops once per downloaded image, uploads the accepted image immediately, and then continues to the next prompt. For multipage artwork, tag and safety edits carry forward as the starting state for the next page and can be edited again.
+* `each` stops once per downloaded image and queues each decision. Back navigation remains available until upload begins. For multipage artwork, tag and safety edits carry forward as the starting state for the next page; **Apply to artwork** queues all remaining pages of that artwork with the current settings.
 * `shared` shows the union of tags across the batch. Source tags remain only on artworks where they were detected, while selected configured or user-added tags apply to every artwork.
 * `ask` lets you choose between the two modes at runtime.
 
-Shared mode creates no post until its review is complete and the final summary is confirmed. In `each` mode, accepting an image uploads it before the next image is shown; aborting later keeps the images already uploaded. Running without a URL opens a repeating URL prompt similar to the former `import.sh` helper.
+Neither mode creates a post until upload begins. The review screen then becomes an upload dashboard with a progress bar and per-image activity log. Uploaded post IDs, exact-match skips, configured similarity skips, and failures are reported separately. Running without a URL opens a repeating URL prompt similar to the former `import.sh` helper.
 
 __Examples__
 * `szuru-toolkit interactive-import "https://www.pixiv.net/artworks/<id>"`

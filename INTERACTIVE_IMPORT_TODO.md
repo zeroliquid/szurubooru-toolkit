@@ -2,9 +2,9 @@
 
 ## Implementation status
 
-The initial dependency-free implementation is now present on `feature/interactive-import`. It includes the phased importer, Pixiv artwork grouping, provenance-aware tag review, per-image/shared modes, editable safety, configuration, CLI wiring, tests, and user documentation.
+The implementation is now present on `feature/interactive-import`. It includes the phased importer, Pixiv artwork grouping, provenance-aware tag review, per-image/shared modes, editable safety, configuration, CLI wiring, tests, and user documentation.
 
-The remaining UI enhancement from this proposal is searchable/arrow-key tag selection. The current Click-based interface uses numbered checkboxes so it does not add another runtime dependency. A formal provider-adapter interface is also future work; the internal grouping and provenance models are already provider-neutral.
+The review workflow now uses a persistent full-screen terminal UI with a dedicated filter, arrow-key navigation, Space toggles, inline tag/safety/duplicate controls, per-image queue and back navigation, and an upload progress/activity screen. A formal provider-adapter interface remains future work; the internal grouping and provenance models are already provider-neutral.
 
 ## Context
 
@@ -68,7 +68,7 @@ max_similarity = 1.0
 
 There are no locked or mandatory tags. Configured tags start selected but remain removable by the user.
 
-Interactive imports default to `max_similarity = 1.0`, so perceptually similar images are uploaded and only exact matches are skipped. The user can press `m` during review to change the threshold for the current session.
+Interactive imports default to `max_similarity = 1.0`, so perceptually similar images are uploaded and only exact matches are skipped. The user can choose **Change duplicate policy** during review to change the threshold for the current session.
 
 Safety policies:
 
@@ -83,11 +83,11 @@ Refactor the URL importer into explicit phases:
 2. **Prepare** normalized metadata without uploading.
 3. **Group** files into artwork batches.
 4. **Review** tags and safety, either per image or through a shared schema.
-5. **Confirm** a shared reviewed import plan, or accept one image in per-image mode.
-6. **Upload** the accepted shared batch, or upload each accepted image before prompting for the next.
+5. **Queue** per-image decisions while retaining Back navigation, or apply the shared schema.
+6. **Upload** the reviewed batch while displaying structured progress and duplicate outcomes.
 7. **Reconcile relations and clean up** temporary downloads.
 
-Shared mode should not create a permanent post before review and final confirmation complete. Per-image mode deliberately uploads each accepted image immediately; aborting later keeps those earlier uploads.
+Neither mode should create a permanent post before review is complete and upload begins.
 
 ## Artwork grouping
 
@@ -245,10 +245,11 @@ The uploader should receive ordinary final tag strings and safety only after rev
 - [x] Add `INTERACTIVE_IMPORT_DEFAULTS` and `[interactive_import]` configuration loading.
 - [x] Add the `interactive-import` Click command and options.
 - [x] Implement the review-mode selection screen.
-- [ ] Implement searchable per-image tag selection and safety editing.
-- [x] Implement numbered per-image tag selection and safety editing.
+- [x] Implement searchable per-image tag selection and safety editing.
+- [x] Replace questionnaire prompts with one persistent full-screen review UI.
 - [x] Implement shared-schema union, occurrence counts, and overlay behavior.
-- [x] Implement add-tag, skip-artwork, abort, and final-confirmation actions.
+- [x] Implement inline add-tag, per-image queue/skip/back/apply-to-artwork, and abort actions.
+- [x] Add upload progress and structured logs for uploaded, exact-match, similarity-skip, and failed images.
 - [x] Ensure Ctrl-C and Ctrl-D abort cleanly before upload.
 - [x] Upload only reviewed and accepted images or shared artwork batches.
 - [x] Preserve relation reconciliation, duplicate handling, ordering, and temporary-directory cleanup.

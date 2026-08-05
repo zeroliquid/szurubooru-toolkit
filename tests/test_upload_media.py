@@ -51,13 +51,18 @@ def test_upload_post_logs_created_post(monkeypatch):
     szuru = StubSzuru()
     wire(monkeypatch, szuru)
     messages = []
+    progress = []
     sink = upload_media.logger.add(lambda message: messages.append(message.record['message']))
     try:
-        upload_media.upload_post(b'file-bytes', 'jpg', file_path='first.jpg')
+        upload_media.upload_post(b'file-bytes', 'jpg', file_path='first.jpg', progress_callback=progress.append)
     finally:
         upload_media.logger.remove(sink)
 
     assert 'Uploaded "first.jpg" as post 42.' in messages
+    assert progress == [
+        {'event': 'checking', 'file_path': 'first.jpg'},
+        {'event': 'uploaded', 'file_path': 'first.jpg', 'post_id': 42},
+    ]
 
 
 def test_upload_post_skips_upload_when_too_similar(monkeypatch):
@@ -93,15 +98,25 @@ def test_upload_post_skips_upload_when_exact_match_exists(monkeypatch):
     wire(monkeypatch, szuru)
 
     messages = []
+    progress = []
     sink = upload_media.logger.add(lambda message: messages.append(message.record['message']))
     try:
-        success, _ = upload_media.upload_post(b'file-bytes', 'jpg', file_path='duplicate.jpg')
+        success, _ = upload_media.upload_post(
+            b'file-bytes',
+            'jpg',
+            file_path='duplicate.jpg',
+            progress_callback=progress.append,
+        )
     finally:
         upload_media.logger.remove(sink)
 
     assert success
     assert szuru.created == []
     assert 'Skipped "duplicate.jpg": it is an exact duplicate of existing post 3.' in messages
+    assert progress == [
+        {'event': 'checking', 'file_path': 'duplicate.jpg'},
+        {'event': 'skipped_exact', 'file_path': 'duplicate.jpg', 'post_id': 3},
+    ]
 
 
 def test_read_sidecar_tags_prefers_gallery_dl_convention(tmp_path):
