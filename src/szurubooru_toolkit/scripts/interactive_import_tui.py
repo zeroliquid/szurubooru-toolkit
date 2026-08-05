@@ -33,6 +33,7 @@ from szurubooru_toolkit.scripts.import_from_url import TagOrigin
 
 
 TERMINAL_UPLOAD_EVENTS = {'uploaded', 'skipped_exact', 'skipped_similar', 'failed'}
+SAFETY_LEVELS = ('safe', 'sketchy', 'unsafe')
 
 
 @dataclass
@@ -85,6 +86,28 @@ def union_tags(batches: list[ArtworkBatch]) -> tuple[list[TagCandidate], Counter
                 tags_by_name[tag.name] = TagCandidate(tag.name, set())
             tags_by_name[tag.name].origins.update(tag.origins)
     return list(tags_by_name.values()), occurrences
+
+
+def source_safety_summary(batches: list[ArtworkBatch]) -> str:
+    """Describe the concrete safety values selected by the fallback policy."""
+
+    if not batches:
+        return 'no artworks'
+
+    counts = Counter(batch.detected_safety for batch in batches)
+    ordered_levels = [*SAFETY_LEVELS, *sorted(set(counts).difference(SAFETY_LEVELS))]
+    fallback_count = sum(batch.detected_safety_origin == 'tool: fallback' for batch in batches)
+
+    if len(batches) == 1:
+        batch = batches[0]
+        origin = 'configured fallback' if batch.detected_safety_origin == 'tool: fallback' else batch.detected_safety_origin
+        return f'{batch.detected_safety} ({origin})'
+
+    summary = ', '.join(f'{level}: {counts[level]}' for level in ordered_levels if counts[level])
+    if fallback_count:
+        suffix = 'artwork' if fallback_count == 1 else 'artworks'
+        summary += f'; fallback used for {fallback_count} {suffix}'
+    return summary
 
 
 def apply_shared_schema(
@@ -175,19 +198,19 @@ class InteractiveImportApp(App[bool]):
     }
 
     #filter, #add-tags {
-        margin-top: 1;
+        margin-top: 0;
     }
 
     #tags {
         height: 1fr;
         min-height: 8;
-        margin-top: 1;
+        margin-top: 0;
         border: round $primary;
     }
 
     #controls {
-        height: 3;
-        margin-top: 1;
+        height: 1;
+        margin-top: 0;
     }
 
     #controls Select {
@@ -200,8 +223,8 @@ class InteractiveImportApp(App[bool]):
     }
 
     #actions {
-        height: auto;
-        margin-top: 1;
+        height: 1;
+        margin-top: 0;
     }
 
     #actions Button {
@@ -277,9 +300,9 @@ class InteractiveImportApp(App[bool]):
 
         with Vertical(id='review-view', classes='hidden'):
             yield Static(id='review-header')
-            yield Input(placeholder='Filter tags (/ to focus; Esc clears)', id='filter')
+            yield Input(placeholder='Filter tags (/ to focus; Esc clears)', id='filter', compact=True)
             yield SelectionList[str](id='tags')
-            yield Input(placeholder='Add comma-separated tags and press Enter', id='add-tags')
+            yield Input(placeholder='Add comma-separated tags and press Enter', id='add-tags', compact=True)
             with Horizontal(id='controls'):
                 yield Select(
                     [('Keep source / fallback', 'fallback'), ('Safe', 'safe'), ('Sketchy', 'sketchy'), ('Unsafe', 'unsafe')],
@@ -287,21 +310,23 @@ class InteractiveImportApp(App[bool]):
                     allow_blank=False,
                     value='fallback',
                     id='safety',
+                    compact=True,
                 )
                 yield Select(
                     [('Exact matches only', 'exact'), ('Custom similarity threshold', 'custom')],
                     allow_blank=False,
                     value='exact',
                     id='duplicates',
+                    compact=True,
                 )
-                yield Input(value=f'{self.custom_similarity:.3f}', id='similarity-threshold', classes='hidden')
+                yield Input(value=f'{self.custom_similarity:.3f}', id='similarity-threshold', classes='hidden', compact=True)
             with Horizontal(id='actions'):
-                yield Button('Queue & next', id='primary', variant='primary')
-                yield Button('Skip & next', id='skip')
-                yield Button('Back', id='back')
-                yield Button('Apply to artwork', id='apply-artwork')
-                yield Button('Upload queued', id='upload-queued', variant='success')
-                yield Button('Abort', id='abort', variant='error')
+                yield Button('Queue & next', id='primary', variant='primary', compact=True)
+                yield Button('Skip & next', id='skip', compact=True)
+                yield Button('Back', id='back', compact=True)
+                yield Button('Apply to artwork', id='apply-artwork', compact=True)
+                yield Button('Upload queued', id='upload-queued', variant='success', compact=True)
+                yield Button('Abort', id='abort', variant='error', compact=True)
 
         with Vertical(id='upload-view', classes='hidden'):
             yield Static(id='upload-header')
@@ -375,7 +400,11 @@ class InteractiveImportApp(App[bool]):
 
         if self.review_mode == 'shared':
             image_count = sum(len(batch.file_paths) for batch in self.batches)
-            safety = 'source/fallback' if self.safety_policy == 'fallback' else self.forced_safety
+            safety = (
+                f'source/fallback → {source_safety_summary(self.batches)}'
+                if self.safety_policy == 'fallback'
+                else f'forced → {self.forced_safety}'
+            )
             header.update(
                 f'[b]Shared schema[/b] — {len(self.batches)} artworks / {image_count} images\n'
                 f'Safety: {safety} · Duplicate policy: {self._duplicate_label()} · '
@@ -413,9 +442,10 @@ class InteractiveImportApp(App[bool]):
         self.loading_controls = True
         safety = self.query_one('#safety', Select)
         if self.review_mode == 'shared':
+            source_summary = source_safety_summary(self.batches)
             safety.set_options(
                 [
-                    ('Keep source / fallback', 'fallback'),
+                    (f'Use source/fallback → {source_summary}', 'fallback'),
                     ('Force safe', 'safe'),
                     ('Force sketchy', 'sketchy'),
                     ('Force unsafe', 'unsafe'),
@@ -689,7 +719,11 @@ class InteractiveImportApp(App[bool]):
         header = self.query_one('#review-header', Static)
         if self.review_mode == 'shared':
             image_count = sum(len(batch.file_paths) for batch in self.batches)
-            safety = 'source/fallback' if self.safety_policy == 'fallback' else self.forced_safety
+            safety = (
+                f'source/fallback → {source_safety_summary(self.batches)}'
+                if self.safety_policy == 'fallback'
+                else f'forced → {self.forced_safety}'
+            )
             header.update(
                 f'[b]Shared schema[/b] — {len(self.batches)} artworks / {image_count} images\n'
                 f'Safety: {safety} · Duplicate policy: {self._duplicate_label()} · '

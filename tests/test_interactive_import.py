@@ -72,6 +72,26 @@ def test_shared_schema_can_restore_detected_safety():
     assert batch.safety_origin == 'pixiv'
 
 
+def test_source_safety_summary_shows_value_and_origin():
+    assert interactive_import_tui.source_safety_summary([make_batch(1, [], safety='sketchy')]) == 'sketchy (pixiv)'
+
+    fallback = make_batch(2, [], safety='safe')
+    fallback.detected_safety_origin = 'tool: fallback'
+    assert interactive_import_tui.source_safety_summary([fallback]) == 'safe (configured fallback)'
+
+
+def test_source_safety_summary_counts_mixed_batch_and_fallbacks():
+    safe = make_batch(1, [], safety='safe')
+    sketchy = make_batch(2, [], safety='sketchy')
+    unsafe = make_batch(3, [], safety='unsafe')
+    unsafe.detected_safety_origin = 'tool: fallback'
+
+    assert (
+        interactive_import_tui.source_safety_summary([safe, sketchy, unsafe])
+        == 'safe: 1, sketchy: 1, unsafe: 1; fallback used for 1 artwork'
+    )
+
+
 def test_per_image_entries_are_independent():
     batch = make_batch(1, [TagCandidate('tagme', {TagOrigin.TOOL_ADDED})], pages=2)
 
@@ -96,6 +116,21 @@ def test_mode_picker_starts_with_shared_schema(monkeypatch):
             await pilot.pause()
             assert app.review_mode == 'shared'
             assert app.query_one('#review-view').display
+            app.exit(False)
+
+    run_tui_test(scenario())
+
+
+def test_shared_review_header_shows_resolved_source_safety(monkeypatch):
+    wire_tui_config(monkeypatch)
+
+    async def scenario():
+        app = interactive_import_tui.InteractiveImportApp([make_batch(1, [], safety='sketchy')], 'shared', 'fallback', 'safe')
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            header = app.query_one('#review-header')
+            assert 'Safety: source/fallback → sketchy (pixiv)' in str(header.content)
+            assert app.query_one('#tags').size.height >= 28
             app.exit(False)
 
     run_tui_test(scenario())
