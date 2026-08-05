@@ -104,7 +104,7 @@ def test_get_metadata_maps_sites():
                 results=[
                     make_result(95.0, ['https://danbooru.donmai.us/posts/123']),
                     make_result(92.0, ['https://yande.re/post/show/456']),
-                    make_result(90.0, [], pixiv_id=789, member_name='some_artist'),
+                    make_result(90.0, [], pixiv_id=789, member_name='some_artist', member_id=456),
                 ],
             ),
         )
@@ -116,6 +116,7 @@ def test_get_metadata_maps_sites():
     assert matches['yande'] == {'site': 'yandere', 'post_id': 456}
     assert matches['pixiv'].url == 'https://www.pixiv.net/member_illust.php?mode=medium&illust_id=789'
     assert matches['pixiv'].author_name == 'some_artist'
+    assert matches['pixiv'].author_id == 456
     assert matches['gelbooru'] is None
     assert short_remaining == 3
     assert long_remaining == 90

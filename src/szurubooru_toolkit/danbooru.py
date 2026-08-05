@@ -60,37 +60,75 @@ class Danbooru:
 
         return tag
 
-    def search_artist(self, artist: str) -> Optional[str]:
+    @staticmethod
+    def _artist_score(artist: dict) -> int:
+        """Rank ambiguous Danbooru artist matches using the historical heuristic."""
+
+        other_names = artist.get('other_names') or []
+        group_bonus = 2 if artist.get('group_name') else 0
+        try:
+            created_year = int(str(artist.get('created_at', '9999'))[:4])
+        except ValueError:
+            created_year = 9999
+        return len(other_names) * 3 + group_bonus - created_year
+
+    @classmethod
+    def _choose_artist(cls, artists: list[dict]) -> Optional[str]:
+        """Choose one artist response, applying the heuristic when ambiguous."""
+
+        if not artists:
+            return None
+        if len(artists) > 1:
+            logger.debug(f'Found {len(artists)} artists. Choosing by score.')
+            return max(artists, key=cls._artist_score)['name']
+        return artists[0]['name']
+
+    def search_artist(self, artist: str, by_url: bool = False) -> Optional[str]:
         """
         Search for the main artist name on Danbooru and return it.
 
-        This method searches for the main artist name on Danbooru, first by base name, then by other names. It retries
-        on connection errors up to 11 times with a 5 second delay. If the artist is not found, it returns None.
+        This method searches for the main artist name on Danbooru by URL, or first by base name and then by other names.
+        Ambiguous URL/alias results are ranked by alias count, group membership, and record age. It retries on connection
+        errors up to 11 times with a 5 second delay. If the artist is not found, it returns None.
 
         Args:
             artist (str): The artist name. Can be an alias as well.
+            by_url (bool, optional): Match a Danbooru artist URL instead of a name. Defaults to False.
 
         Returns:
             Optional[str]: The main artist name if found, None otherwise.
         """
 
+        search_term = artist
         for _ in range(1, 12):
             try:
-                response = self.client.get('/artists.json', params={'search[name]': artist.lower()})
+                if by_url:
+                    params = {'search[url_matches]': artist.lower(), 'search[is_deleted]': 'false'}
+                else:
+                    params = {'search[name]': artist.lower()}
+
+                response = self.client.get('/artists.json', params=params)
                 response.raise_for_status()
                 result = response.json()
 
-                if result:
+                if result and not by_url:
                     artist = result[0]['name']
                 else:
-                    params = {'search[any_other_name_like]': artist.lower(), 'search[is_deleted]': 'false'}
-                    artist = self.client.get('/artists.json', params=params).json()[0]['name']
+                    if not by_url:
+                        params = {'search[any_other_name_like]': artist.lower(), 'search[is_deleted]': 'false'}
+                        response = self.client.get('/artists.json', params=params)
+                        response.raise_for_status()
+                        result = response.json()
+                    matched_artist = self._choose_artist(result)
+                    if not matched_artist:
+                        raise IndexError
+                    artist = matched_artist
 
                 logger.debug(f'Returning artist: {artist}')
 
                 break
             except (IndexError, KeyError):
-                logger.debug(f'Could not find artist "{artist.lower()}"')
+                logger.debug(f'Could not find artist "{search_term.lower()}"')
                 artist = None
 
                 break

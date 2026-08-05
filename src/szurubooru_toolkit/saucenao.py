@@ -29,6 +29,7 @@ class SauceNaoResult:
         self.index_id = header.get('index_id')
         self.urls = list(data.get('ext_urls', []))
         self.author_name = data.get('member_name') or data.get('author_name')
+        self.author_id = data.get('member_id')
 
         # For pixiv results, expose the canonical illust_id URL since downstream
         # code extracts the post ID from the 'illust_id=' query param.

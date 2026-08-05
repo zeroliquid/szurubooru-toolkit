@@ -118,16 +118,19 @@ def prepare_tag_candidates(metadata: dict, add_tags: list[str] | None = None) ->
         candidates.extend(TagCandidate(tag, {TagOrigin.SOURCE}) for tag in tags)
 
     artist = ''
+    artist_id = None
     if site == 'e-hentai':
         for tag in raw_tags:
             if tag.startswith('artist:'):
                 artist = tag.split(':', 1)[1].replace(' ', '_')
                 break
     elif site in ['fanbox', 'pixiv']:
-        artist = metadata.get('user', {}).get('name', '')
+        user = metadata.get('user') or {}
+        artist = user.get('name', '')
+        artist_id = user.get('id')
 
     if artist:
-        canon_artist = Pixiv.extract_pixiv_artist(artist)
+        canon_artist = Pixiv.extract_pixiv_artist(artist, artist_id)
         if canon_artist:
             candidates.append(TagCandidate(canon_artist, {TagOrigin.TOOL_DERIVED}))
 

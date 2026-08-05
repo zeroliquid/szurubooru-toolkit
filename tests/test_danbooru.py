@@ -28,6 +28,27 @@ def test_search_artist_fallback_to_other_names():
     assert make_danbooru(handler).search_artist('alias') == 'main_name'
 
 
+def test_search_artist_by_pixiv_url_uses_heuristic():
+    def handler(request):
+        params = dict(request.url.params)
+        assert params['search[url_matches]'] == 'users/123'
+        assert params['search[is_deleted]'] == 'false'
+        return httpx.Response(
+            200,
+            json=[
+                {'name': 'older_match', 'other_names': [], 'group_name': None, 'created_at': '2020-01-01T00:00:00Z'},
+                {
+                    'name': 'better_match',
+                    'other_names': ['alias_one', 'alias_two'],
+                    'group_name': None,
+                    'created_at': '2024-01-01T00:00:00Z',
+                },
+            ],
+        )
+
+    assert make_danbooru(handler).search_artist('users/123', by_url=True) == 'better_match'
+
+
 def test_search_artist_not_found():
     def handler(request):
         return httpx.Response(200, json=[])
