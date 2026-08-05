@@ -146,3 +146,6 @@ dmypy.json
 
 # Local-only compose override (e.g. build: . while the published image lacks wd-tagger)
 docker-compose.override.yml
+
+# zeroliquid/szurubooru-toolkit
+misc/deepbooru
