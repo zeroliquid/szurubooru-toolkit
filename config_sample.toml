@@ -113,6 +113,17 @@ update_tags_if_exists = false
 hide_progress = false
 workers = 4
 
+[interactive_import]
+# "ask" prompts at runtime; "each" stops once per image; "shared" reviews one overlay for the batch.
+review_mode = "ask"
+# With "fallback", source safety wins when available. With "override", this value is initially forced for every image.
+default_safety = "safe"
+safety_policy = "fallback"
+# These tags start selected on every image, but can still be removed in the review screen.
+add_tags = ["tagme"]
+# Upload visually similar images. Exact matches are still skipped separately.
+max_similarity = 1.0
+
 [reset_posts]
 hide_progress = false
 workers = 4

@@ -39,6 +39,7 @@ Commands:
   fix-relations      Complete post relation sets via transitive closure
   import-from-booru  Download and tag posts from various Boorus
   import-from-url    Download images from URLS or file containing URLs
+  interactive-import Download, review, and upload artwork batches from URLs
   preview-tags       Show WD tagger scores near the thresholds without tagging anything
   reset-posts        Remove tags and sources
   tag-posts          Tag posts manually
@@ -185,6 +186,7 @@ Following commands are currently available:
 * `fix-relations`: Complete post relation sets so every member of a set references all other members
 * `import-from-booru`: Download and tag posts from various Boorus
 * `import-from-url`: Batch importing of URLs based on [gallery-dl](https://github.com/mikf/gallery-dl)
+* `interactive-import`: Review tags and safety before uploading URL imports
 * `preview-tags`: Show WD tagger scores near the thresholds for a file or post without tagging anything
 * `reset-posts`: Remove tags and sources
 * `tag-posts`: Tag posts manually
@@ -248,6 +250,27 @@ __Examples__
 * `szuru-toolkit import-from-url "https://e-hentai.org/g/<gid>/<token>/"`
 * `szuru-toolkit import-from-url --cookies "~/cookies.txt" --range ":100" "https://twitter.com/<USERNAME>/likes"`
 * `szuru-toolkit import-from-url --input-file urls.txt "https://danbooru.donmai.us/posts?tags=foo" "https://beta.sankakucomplex.com/post/show/<id>"`
+
+### :mag: interactive-import
+
+This command downloads and prepares metadata before uploading anything. Pixiv pages with the same artwork ID are grouped, so a multipage artwork is evaluated and reviewed once and its accepted metadata is applied to every page.
+
+Tags start selected and can all be removed. Labels distinguish tags mapped from source metadata, tags derived by the toolkit (such as an artist), tags added by configuration or command-line options, and tags entered during review. Safety can also be edited.
+
+Interactive imports default to `max_similarity = 1.0`: every non-exact image is uploaded, even if it closely resembles an earlier page. Exact file matches are still skipped. Press `m` on a review screen to change this policy for the current session, set `max_similarity` under `[interactive_import]`, or pass `--max-similarity 0.98` on the command line.
+
+Two review modes are available:
+
+* `each` stops once per downloaded image, uploads the accepted image immediately, and then continues to the next prompt. For multipage artwork, tag and safety edits carry forward as the starting state for the next page and can be edited again.
+* `shared` shows the union of tags across the batch. Source tags remain only on artworks where they were detected, while selected configured or user-added tags apply to every artwork.
+* `ask` lets you choose between the two modes at runtime.
+
+Shared mode creates no post until its review is complete and the final summary is confirmed. In `each` mode, accepting an image uploads it before the next image is shown; aborting later keeps the images already uploaded. Running without a URL opens a repeating URL prompt similar to the former `import.sh` helper.
+
+__Examples__
+* `szuru-toolkit interactive-import "https://www.pixiv.net/artworks/<id>"`
+* `szuru-toolkit interactive-import --review-mode each --default-safety sketchy --safety-policy override --add-tags "tagme,potential_rels" "https://www.pixiv.net/artworks/<id>"`
+* `szuru-toolkit interactive-import --review-mode shared --input-file urls.txt`
 
 ### :outbox_tray: upload-media
 This script uploads media files from a local directory (`src_path`).

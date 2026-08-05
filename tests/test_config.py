@@ -20,6 +20,7 @@ def test_defaults_not_shared_between_instances(make_config):
     second = make_config()
 
     assert second.upload_media['tags'] == ['tagme']
+    assert second.interactive_import['max_similarity'] == 1.0
     assert second.credentials['pixiv']['token'] is None
     assert config_module.UPLOAD_MEDIA_DEFAULTS['tags'] == ['tagme']
 

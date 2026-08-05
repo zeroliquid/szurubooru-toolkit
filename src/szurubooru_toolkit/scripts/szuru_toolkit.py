@@ -37,7 +37,7 @@ def setup_module(module_name: str, click_context: click.core.Context) -> types.M
     setup_clients()
     module = importlib.import_module('szurubooru_toolkit.scripts.' + module_name)
 
-    if module_name in ['import_from_url', 'upload_media']:
+    if module_name in ['import_from_url', 'interactive_import', 'upload_media']:
         config.validate_path()
 
     return module
@@ -656,6 +656,77 @@ def click_import_from_url(
         add_tags = []
 
     module.main(list(urls), input_file, add_tags, verbose)
+
+
+@cli.command(
+    'interactive-import',
+    epilog='Example: szuru-toolkit interactive-import "https://www.pixiv.net/artworks/<id>"',
+)
+@click.argument('urls', nargs=-1)
+@click.option('--input-file', help='Download URLs found in FILE.')
+@click.option(
+    '--range',
+    help=f'gallery-dl index range (default: {config.IMPORT_FROM_URL_DEFAULTS["range"]}).',
+)
+@click.option('--cookies', help='Path to a cookies file for gallery-dl authentication.')
+@click.option(
+    '--review-mode',
+    type=click.Choice(['ask', 'each', 'shared'], case_sensitive=False),
+    help=f'Review each image or one shared schema (default: {config.INTERACTIVE_IMPORT_DEFAULTS["review_mode"]}).',
+)
+@click.option(
+    '--default-safety',
+    type=click.Choice(['safe', 'sketchy', 'unsafe'], case_sensitive=True),
+    help=f'Fallback or overridden safety (default: {config.INTERACTIVE_IMPORT_DEFAULTS["default_safety"]}).',
+)
+@click.option(
+    '--safety-policy',
+    type=click.Choice(['fallback', 'override'], case_sensitive=False),
+    help=f'Use source safety when available or override it (default: {config.INTERACTIVE_IMPORT_DEFAULTS["safety_policy"]}).',
+)
+@click.option(
+    '--max-similarity',
+    type=click.FloatRange(0, 1),
+    help='Skip perceptually similar images above this ratio; 1.0 skips exact matches only (default: 1.0).',
+)
+@click.option('--add-tags', help='Comma-separated tags initially selected for every image; all remain removable.')
+@click.option('--verbose', is_flag=True, help='Show gallery-dl download progress.')
+@click.option(
+    '--workers',
+    type=int,
+    help=f'How many files to download/upload concurrently (default: {config.IMPORT_FROM_URL_DEFAULTS["workers"]}).',
+)
+@click.pass_context
+def click_interactive_import(
+    ctx,
+    urls,
+    input_file,
+    range,
+    cookies,
+    review_mode,
+    default_safety,
+    safety_policy,
+    max_similarity,
+    add_tags,
+    verbose,
+    workers,
+):
+    """Download, review, and upload artwork batches from URLs."""
+
+    download_options = ['range', 'cookies', 'workers']
+    interactive_options = ['review_mode', 'default_safety', 'safety_policy', 'max_similarity', 'add_tags']
+    for name in download_options:
+        if ctx.get_parameter_source(name) == ParameterSource.COMMANDLINE:
+            ctx.obj.setdefault('import_from_url', {})[name] = ctx.params[name]
+    for name in interactive_options:
+        if ctx.get_parameter_source(name) == ParameterSource.COMMANDLINE:
+            value = ctx.params[name]
+            if name == 'add_tags':
+                value = [tag.strip() for tag in value.split(',') if tag.strip()]
+            ctx.obj.setdefault('interactive_import', {})[name] = value
+
+    module = setup_module('interactive_import', ctx)
+    module.main(list(urls), input_file, verbose)
 
 
 @cli.command('reset-posts', epilog='Example: szuru-toolkit reset-posts reset-posts --except-ids "2,4" --add-tags "tagme,foo" "foobar"')

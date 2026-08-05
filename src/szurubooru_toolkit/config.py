@@ -107,6 +107,15 @@ IMPORT_FROM_URL_DEFAULTS = {
     'workers': 4,
 }
 
+INTERACTIVE_IMPORT_DEFAULTS = {
+    'review_mode': 'ask',
+    'default_safety': 'safe',
+    'safety_policy': 'fallback',
+    'add_tags': ['tagme'],
+    # 1.0 disables perceptual-similarity skipping; exact matches are still skipped.
+    'max_similarity': 1.0,
+}
+
 RESET_POSTS_DEFAULTS = {'hide_progress': False, 'workers': 4}
 
 TAG_POSTS_DEFAULTS = {
@@ -170,6 +179,7 @@ class Config:
         self.preview_tags = copy.deepcopy(PREVIEW_TAGS_DEFAULTS)
         self.import_from_booru = copy.deepcopy(IMPORT_FROM_BOORU_DEFAULTS)
         self.import_from_url = copy.deepcopy(IMPORT_FROM_URL_DEFAULTS)
+        self.interactive_import = copy.deepcopy(INTERACTIVE_IMPORT_DEFAULTS)
         self.reset_posts = copy.deepcopy(RESET_POSTS_DEFAULTS)
         self.tag_posts = copy.deepcopy(TAG_POSTS_DEFAULTS)
         self.upload_media = copy.deepcopy(UPLOAD_MEDIA_DEFAULTS)
@@ -352,6 +362,32 @@ class Config:
             )
             logger.critical('Choose between safe, sketchy and unsafe.')
             exit(1)
+
+        if self.interactive_import['default_safety'] not in ['safe', 'sketchy', 'unsafe']:
+            logger.critical(f'The interactive default_safety "{self.interactive_import["default_safety"]}" is not valid!')
+            exit(1)
+
+        if self.interactive_import['safety_policy'] not in ['fallback', 'override']:
+            logger.critical(f'The interactive safety_policy "{self.interactive_import["safety_policy"]}" is not valid!')
+            exit(1)
+
+        if self.interactive_import['review_mode'] not in ['ask', 'each', 'shared']:
+            logger.critical(f'The interactive review_mode "{self.interactive_import["review_mode"]}" is not valid!')
+            exit(1)
+
+        if not isinstance(self.interactive_import['add_tags'], list):
+            logger.critical('interactive_import.add_tags has to be a list of tags!')
+            exit(1)
+
+        try:
+            interactive_max_similarity = float(self.interactive_import['max_similarity'])
+        except (TypeError, ValueError):
+            logger.critical('interactive_import.max_similarity has to be a number between 0 and 1!')
+            exit(1)
+        if not 0 <= interactive_max_similarity <= 1:
+            logger.critical('interactive_import.max_similarity has to be between 0 and 1!')
+            exit(1)
+        self.interactive_import['max_similarity'] = interactive_max_similarity
 
         for level, tags in self.auto_tagger['safety_overrides'].items():
             if level not in ['sketchy', 'unsafe']:

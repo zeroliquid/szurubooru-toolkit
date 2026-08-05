@@ -47,25 +47,61 @@ def test_upload_post_uploads_new_file_and_relates_similar_posts(monkeypatch):
     assert szuru.created[0]['contentToken'] == 'content-token'
 
 
+def test_upload_post_logs_created_post(monkeypatch):
+    szuru = StubSzuru()
+    wire(monkeypatch, szuru)
+    messages = []
+    sink = upload_media.logger.add(lambda message: messages.append(message.record['message']))
+    try:
+        upload_media.upload_post(b'file-bytes', 'jpg', file_path='first.jpg')
+    finally:
+        upload_media.logger.remove(sink)
+
+    assert 'Uploaded "first.jpg" as post 42.' in messages
+
+
 def test_upload_post_skips_upload_when_too_similar(monkeypatch):
     # default max_similarity 0.95 -> distance below 0.05 is "the same post"
     szuru = StubSzuru(similar_posts=[{'distance': 0.01, 'post': {'id': 7}}])
     wire(monkeypatch, szuru)
 
-    success, _ = upload_media.upload_post(b'file-bytes', 'jpg')
+    messages = []
+    sink = upload_media.logger.add(lambda message: messages.append(message.record['message']))
+    try:
+        success, _ = upload_media.upload_post(b'file-bytes', 'jpg', file_path='second.jpg')
+    finally:
+        upload_media.logger.remove(sink)
 
     assert success
     assert szuru.created == []
+    assert any('Skipped "second.jpg": it is 99.0% similar to existing post 7' in message for message in messages)
+
+
+def test_upload_post_allows_similar_image_at_max_similarity_one(monkeypatch):
+    szuru = StubSzuru(similar_posts=[{'distance': 0.01, 'post': {'id': 7}}])
+    wire(monkeypatch, szuru)
+    upload_media.config.upload_media['max_similarity'] = 1.0
+
+    success, _ = upload_media.upload_post(b'file-bytes', 'jpg', file_path='second.jpg')
+
+    assert success
+    assert len(szuru.created) == 1
 
 
 def test_upload_post_skips_upload_when_exact_match_exists(monkeypatch):
     szuru = StubSzuru(exact_post={'id': 3})
     wire(monkeypatch, szuru)
 
-    success, _ = upload_media.upload_post(b'file-bytes', 'jpg')
+    messages = []
+    sink = upload_media.logger.add(lambda message: messages.append(message.record['message']))
+    try:
+        success, _ = upload_media.upload_post(b'file-bytes', 'jpg', file_path='duplicate.jpg')
+    finally:
+        upload_media.logger.remove(sink)
 
     assert success
     assert szuru.created == []
+    assert 'Skipped "duplicate.jpg": it is an exact duplicate of existing post 3.' in messages
 
 
 def test_read_sidecar_tags_prefers_gallery_dl_convention(tmp_path):

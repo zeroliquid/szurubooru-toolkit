@@ -60,3 +60,72 @@ def test_gelbooru_credentials_passed_to_gallery_dl(monkeypatch):
 
     assert '--option=extractor.gelbooru.user-id=123' in captured['params']
     assert '--option=extractor.gelbooru.api-key=abc' in captured['params']
+
+
+def test_prepare_groups_pixiv_pages_and_evaluates_tags_once(monkeypatch, tmp_path):
+    class Cfg:
+        auto_tagger = {'use_pixiv_artist': False}
+
+    monkeypatch.setattr(import_from_url, 'config', Cfg)
+    converted = []
+    monkeypatch.setattr(import_from_url, 'convert_tags', lambda tags: converted.append(tags) or ['canonical_tag'])
+    monkeypatch.setattr(import_from_url.Pixiv, 'extract_pixiv_artist', staticmethod(lambda artist: 'canonical_artist'))
+
+    files = []
+    for page in (1, 2):
+        file = tmp_path / f'123_p{page}.jpg'
+        file.write_bytes(b'image')
+        (tmp_path / f'123_p{page}.jpg.json').write_text(
+            '{"file_url":"https://www.pixiv.net/artworks/123", "id":123, "tags":["raw"],'
+            ' "user":{"name":"Artist"}, "rating":"safe"}',
+        )
+        files.append(str(file))
+
+    batches = import_from_url.prepare_artwork_batches(files, add_tags=['tagme'])
+
+    assert len(batches) == 1
+    assert batches[0].work_id == '123'
+    assert batches[0].file_paths == files
+    assert [tag.name for tag in batches[0].tags] == ['canonical_tag', 'canonical_artist', 'tagme']
+    assert converted == [['raw']]
+    assert import_from_url.TagOrigin.SOURCE_MAPPED in batches[0].tags[0].origins
+    assert import_from_url.TagOrigin.TOOL_DERIVED in batches[0].tags[1].origins
+    assert import_from_url.TagOrigin.TOOL_ADDED in batches[0].tags[2].origins
+
+
+def test_prepare_can_override_source_safety(monkeypatch, tmp_path):
+    monkeypatch.setattr(import_from_url, 'convert_tags', lambda tags: [])
+    monkeypatch.setattr(import_from_url.Pixiv, 'extract_pixiv_artist', staticmethod(lambda artist: None))
+    file = tmp_path / '123.jpg'
+    file.write_bytes(b'image')
+    (tmp_path / '123.jpg.json').write_text(
+        '{"file_url":"https://www.pixiv.net/artworks/123", "id":123, "tags":[],'
+        ' "user":{"name":"Artist"}, "rating":"explicit"}',
+    )
+
+    batch = import_from_url.prepare_artwork_batches(
+        [str(file)],
+        default_safety='sketchy',
+        safety_policy='override',
+    )[0]
+
+    assert batch.detected_safety == 'unsafe'
+    assert batch.safety == 'sketchy'
+    assert batch.safety_origin == 'tool: override'
+
+
+def test_prepare_unknown_source_safety_uses_fallback(monkeypatch, tmp_path):
+    monkeypatch.setattr(import_from_url, 'convert_tags', lambda tags: [])
+    monkeypatch.setattr(import_from_url.Pixiv, 'extract_pixiv_artist', staticmethod(lambda artist: None))
+    file = tmp_path / '123.jpg'
+    file.write_bytes(b'image')
+    (tmp_path / '123.jpg.json').write_text(
+        '{"file_url":"https://www.pixiv.net/artworks/123", "id":123, "tags":[],'
+        ' "user":{"name":"Artist"}, "rating":"unknown"}',
+    )
+
+    batch = import_from_url.prepare_artwork_batches([str(file)], default_safety='sketchy')[0]
+
+    assert batch.detected_safety == 'sketchy'
+    assert batch.safety == 'sketchy'
+    assert batch.safety_origin == 'tool: fallback'

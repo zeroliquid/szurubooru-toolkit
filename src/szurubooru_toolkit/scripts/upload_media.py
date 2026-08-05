@@ -339,6 +339,7 @@ def upload_post(
 
     post = Post()
     original_md5 = ''
+    file_label = f'"{file_path}"' if file_path else 'in-memory media'
 
     if file_ext not in ['mp4', 'webm', 'gif']:
         post.media, original_md5, updated_file_ext = eval_convert_image(file, file_ext, file_path)
@@ -350,6 +351,7 @@ def upload_post(
     if not post.token:
         # The upload failed and was already logged; a reverse search without a
         # token would only add a misleading MissingRequiredFileError (#78).
+        logger.error(f'Failed to process {file_label}: the temporary upload did not return a content token.')
         return False, saucenao_limit_reached
 
     exact_post, similar_posts, errors = check_similarity(szuru, post.token)
@@ -364,11 +366,16 @@ def upload_post(
     # --update-tags-if-exists their tags get updated instead.
     existing_posts = [exact_post] if exact_post else []
 
+    if exact_post:
+        logger.info(f'Skipped {file_label}: it is an exact duplicate of existing post {exact_post["id"]}.')
+
     if not exact_post:
         for entry in similar_posts:
             if entry['distance'] < threshold:
-                logger.debug(
-                    f'File "{file_path}" is too similar to post {entry["post"]["id"]} ({(1 - entry["distance"]) * 100:.1f}%)',
+                similarity = (1 - entry['distance']) * 100
+                logger.info(
+                    f'Skipped {file_label}: it is {similarity:.1f}% similar to existing post '
+                    f'{entry["post"]["id"]}, above max_similarity {float(config.upload_media["max_similarity"]) * 100:.1f}%.',
                 )
                 existing_posts.append(entry)
 
@@ -393,6 +400,8 @@ def upload_post(
         if not post_id:
             return False, saucenao_limit_reached
 
+        logger.success(f'Uploaded {file_label} as post {post_id}.')
+
         # Record similarity edges so the batch reconciliation can complete the
         # relation sets once all files are uploaded (earlier posts don't know
         # about later ones yet). The perceptual hash catches similarity between
@@ -413,8 +422,8 @@ def upload_post(
             )
 
     else:
-        logger.debug('File is already uploaded')
         if config.import_from_url['update_tags_if_exists'] and metadata:
+            logger.info(f'Updating tags on existing post match(es) for {file_label}.')
             for entry in existing_posts:
                 saucenao_limit_reached = update_tags(entry, metadata, saucenao_limit_reached, original_md5, post.media)
 
@@ -426,6 +435,7 @@ def main(
     file_to_upload: bytes = None,
     file_ext: str = None,
     metadata: dict = None,
+    file_path: str = None,
     saucenao_limit_reached: bool = False,
     relations_batch: RelationsBatch = None,
 ) -> int:
@@ -442,6 +452,7 @@ def main(
         file_to_upload (bytes, optional): A specific file to upload. Defaults to None.
         file_ext (str, optional): The file extension of the file to upload. Defaults to None.
         metadata (dict, optional): Metadata to attach to the post. Defaults to None.
+        file_path (str, optional): Original file path used in status logging. Defaults to None.
         saucenao_limit_reached (bool, optional): If the SauceNAO limit has been reached. Defaults to False.
 
     Returns:
@@ -524,6 +535,7 @@ def main(
                     file_to_upload,
                     file_ext,
                     metadata,
+                    file_path=file_path,
                     saucenao_limit_reached=saucenao_limit_reached,
                     relations_batch=relations_batch,
                 )
