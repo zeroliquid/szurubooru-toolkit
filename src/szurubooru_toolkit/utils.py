@@ -12,6 +12,7 @@ from functools import total_ordering
 from io import BytesIO
 from pathlib import Path
 from time import sleep
+from typing import Callable
 
 import httpx
 from httpx import HTTPStatusError
@@ -681,7 +682,13 @@ def prepare_post(results: dict, config: Config) -> tuple[list[str], list[str], s
     return final_tags, sources, rating
 
 
-def invoke_gallery_dl(urls: list, tmp_path: str, params: list = [], workers: int = 1) -> str:
+def invoke_gallery_dl(
+    urls: list,
+    tmp_path: str,
+    params: list = [],
+    workers: int = 1,
+    output_callback: Callable[[str], None] | None = None,
+) -> str:
     """
     Invokes gallery-dl for the provided URLs and parameters.
 
@@ -706,13 +713,34 @@ def invoke_gallery_dl(urls: list, tmp_path: str, params: list = [], workers: int
     download_dir = f'{tmp_path}/{timestamp}'
     base_command = ['gallery-dl', f'-D={download_dir}'] + params
 
+    def run(command: list[str]) -> None:
+        if output_callback is None:
+            subprocess.run(command)
+            return
+
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        if process.stdout:
+            for line in process.stdout:
+                output_callback(line.rstrip())
+        return_code = process.wait()
+        if return_code:
+            error = subprocess.CalledProcessError(return_code, command)
+            error.download_dir = download_dir
+            raise error
+
     if len(urls) > 1 and workers > 1:
         with ThreadPoolExecutor(max_workers=min(workers, len(urls))) as executor:
-            futures = [executor.submit(subprocess.run, base_command + [url]) for url in urls]
+            futures = [executor.submit(run, base_command + [url]) for url in urls]
             for future in futures:
                 future.result()
     else:
-        subprocess.run(base_command + urls)
+        run(base_command + urls)
 
     return download_dir
 

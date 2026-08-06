@@ -1,5 +1,7 @@
 import threading
 
+import pytest
+
 from szurubooru_toolkit import utils
 from szurubooru_toolkit.utils import invoke_gallery_dl
 
@@ -54,3 +56,47 @@ def test_multiple_urls_with_one_worker_stay_sequential(monkeypatch, tmp_path):
     # One process with both URLs, like before
     assert len(fake.commands) == 1
     assert fake.commands[0][-2:] == urls
+
+
+def test_output_callback_streams_process_output_and_checks_status(monkeypatch, tmp_path):
+    class FakeProcess:
+        stdout = ['first line\n', 'second line\n']
+
+        @staticmethod
+        def wait():
+            return 0
+
+    captured = {}
+
+    def fake_popen(command, **kwargs):
+        captured['command'] = command
+        captured['kwargs'] = kwargs
+        return FakeProcess()
+
+    monkeypatch.setattr(utils.subprocess, 'Popen', fake_popen)
+    output = []
+
+    invoke_gallery_dl(['https://example.com/a'], str(tmp_path), output_callback=output.append)
+
+    assert captured['command'][-1] == 'https://example.com/a'
+    assert captured['kwargs']['stderr'] is utils.subprocess.STDOUT
+    assert output == ['first line', 'second line']
+
+
+def test_output_callback_raises_when_gallery_dl_fails(monkeypatch, tmp_path):
+    class FailedProcess:
+        stdout = ['authentication failed\n']
+
+        @staticmethod
+        def wait():
+            return 5
+
+    monkeypatch.setattr(utils.subprocess, 'Popen', lambda *args, **kwargs: FailedProcess())
+    output = []
+
+    with pytest.raises(utils.subprocess.CalledProcessError) as error:
+        invoke_gallery_dl(['https://example.com/a'], str(tmp_path), output_callback=output.append)
+
+    assert error.value.returncode == 5
+    assert error.value.download_dir.startswith(str(tmp_path))
+    assert output == ['authentication failed']

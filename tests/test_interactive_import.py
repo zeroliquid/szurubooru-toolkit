@@ -15,7 +15,8 @@ from szurubooru_toolkit.scripts.import_from_url import TagOrigin  # noqa: E402
 
 class TuiConfig:
     upload_media = {'max_similarity': 1.0}
-    interactive_import = {'max_similarity': 1.0}
+    interactive_import = {'max_similarity': 1.0, 'add_tags': []}
+    import_from_url = {'workers': 1}
 
 
 def make_batch(work_id, tags, safety='safe', pages=1):
@@ -34,7 +35,8 @@ def make_batch(work_id, tags, safety='safe', pages=1):
 
 def wire_tui_config(monkeypatch):
     TuiConfig.upload_media = {'max_similarity': 1.0}
-    TuiConfig.interactive_import = {'max_similarity': 1.0}
+    TuiConfig.interactive_import = {'max_similarity': 1.0, 'add_tags': []}
+    TuiConfig.import_from_url = {'workers': 1}
     monkeypatch.setattr(interactive_import_tui, 'config', TuiConfig)
 
 
@@ -108,7 +110,7 @@ def test_mode_picker_starts_with_shared_schema(monkeypatch):
     wire_tui_config(monkeypatch)
 
     async def scenario():
-        app = interactive_import_tui.InteractiveImportApp([make_batch(1, [])], 'ask', 'fallback', 'safe')
+        app = interactive_import_tui.InteractiveImportApp([make_batch(1, [], pages=2)], 'ask', 'fallback', 'safe')
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
             assert app.focused.id == 'mode-shared'
@@ -116,6 +118,36 @@ def test_mode_picker_starts_with_shared_schema(monkeypatch):
             await pilot.pause()
             assert app.review_mode == 'shared'
             assert app.query_one('#review-view').display
+            app.exit(False)
+
+    run_tui_test(scenario())
+
+
+def test_single_image_skips_mode_picker_and_uses_shared_review(monkeypatch):
+    wire_tui_config(monkeypatch)
+
+    async def scenario():
+        app = interactive_import_tui.InteractiveImportApp([make_batch(1, [])], 'ask', 'fallback', 'safe')
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            assert app.review_mode == 'shared'
+            assert app.query_one('#review-view').display
+            assert not app.query_one('#mode-view').display
+            app.exit(False)
+
+    run_tui_test(scenario())
+
+
+def test_source_panel_fits_inside_short_terminal(monkeypatch):
+    wire_tui_config(monkeypatch)
+
+    async def scenario():
+        app = interactive_import_tui.InteractiveImportApp([], 'ask', 'fallback', 'safe')
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            source = app.query_one('#source-view')
+            panel = app.query_one('#source-panel')
+            assert source.content_region.contains_region(panel.region)
             app.exit(False)
 
     run_tui_test(scenario())
@@ -240,7 +272,148 @@ def test_upload_screen_tracks_exact_matches_and_uploaded_posts(monkeypatch):
     run_tui_test(scenario())
 
 
-def test_run_once_passes_prepared_batches_to_tui_and_cleans_up(monkeypatch):
+def test_download_and_prepare_sources_reports_output_and_builds_batches():
+    batch = make_batch(1, [])
+    downloads = []
+    preparations = []
+    progress = []
+
+    def download(urls, input_file, verbose, output_callback=None):
+        downloads.append((urls, input_file, verbose))
+        output_callback('gallery-dl test output')
+        return '/tmp/download-1', ['1_p1.jpg']
+
+    def prepare(files, **kwargs):
+        preparations.append((files, kwargs))
+        return [batch]
+
+    result = interactive_import_tui.download_and_prepare_sources(
+        [(['https://www.pixiv.net/artworks/1'], '', 'Pixiv 1')],
+        download,
+        prepare,
+        False,
+        1,
+        [],
+        'safe',
+        'fallback',
+        progress.append,
+    )
+
+    assert result.batches == [batch]
+    assert result.download_dirs == ['/tmp/download-1']
+    assert result.error == ''
+    assert downloads == [(['https://www.pixiv.net/artworks/1'], '', False)]
+    assert preparations[0][0] == ['1_p1.jpg']
+    assert preparations[0][1]['add_tags'] == []
+    assert progress == [
+        {'event': 'output', 'label': 'Pixiv 1', 'message': 'gallery-dl test output'},
+        {'event': 'downloaded', 'label': 'Pixiv 1', 'file_count': 1},
+        {'event': 'preparing', 'file_count': 1},
+    ]
+
+
+def test_download_and_prepare_sources_retains_partial_directory_after_failure():
+    def fail(*args, **kwargs):
+        error = RuntimeError('gallery-dl failed')
+        error.download_dir = '/tmp/partial-download'
+        raise error
+
+    progress = []
+    result = interactive_import_tui.download_and_prepare_sources(
+        [(['https://example.com/failure'], '', 'failed source')],
+        fail,
+        lambda *args, **kwargs: [],
+        False,
+        1,
+        [],
+        'safe',
+        'fallback',
+        progress.append,
+    )
+
+    assert result.batches == []
+    assert result.download_dirs == ['/tmp/partial-download']
+    assert 'gallery-dl failed' in result.error
+    assert progress == [{'event': 'failed', 'label': 'failed source', 'message': 'gallery-dl failed'}]
+
+
+def test_url_submission_opens_review_and_tracks_download(monkeypatch):
+    wire_tui_config(monkeypatch)
+    batch = make_batch(1, [])
+    cleaned = []
+
+    def finish_download(app, jobs):
+        assert jobs == [(['https://www.pixiv.net/artworks/1'], '', 'https://www.pixiv.net/artworks/1')]
+        app._on_download_progress(
+            interactive_import_tui.DownloadProgressMessage(
+                {'event': 'output', 'label': 'Pixiv 1', 'message': 'gallery-dl test output'},
+            ),
+        )
+        app._on_download_progress(
+            interactive_import_tui.DownloadProgressMessage(
+                {'event': 'downloaded', 'label': 'Pixiv 1', 'file_count': 1},
+            ),
+        )
+        app._on_download_finished(interactive_import_tui.DownloadFinishedMessage([batch], ['/tmp/download-1']))
+
+    monkeypatch.setattr(interactive_import_tui.InteractiveImportApp, '_perform_download', finish_download)
+
+    async def scenario():
+        app = interactive_import_tui.InteractiveImportApp(
+            [],
+            'shared',
+            'fallback',
+            'safe',
+            cleanup_callback=cleaned.append,
+        )
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            assert app.query_one('#source-view').display
+            app.query_one('#url-input').value = 'https://www.pixiv.net/artworks/1'
+            app._on_url_submitted()
+            assert app.query_one('#review-view').display
+            assert app.batches == [batch]
+            assert app.download_completed == 1
+            download_log = '\n'.join(line.text for line in app.query_one('#download-log').lines)
+            assert 'gallery-dl test output' in download_log
+            app.cleanup_downloads()
+            assert cleaned == ['/tmp/download-1']
+            app.exit(False)
+
+    run_tui_test(scenario())
+
+
+def test_import_another_cleans_downloads_and_returns_to_url_entry(monkeypatch):
+    wire_tui_config(monkeypatch)
+    cleaned = []
+
+    async def scenario():
+        app = interactive_import_tui.InteractiveImportApp(
+            [make_batch(1, [])],
+            'shared',
+            'fallback',
+            'safe',
+            cleanup_callback=cleaned.append,
+        )
+        app.download_dirs = ['/tmp/download-1']
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.query_one('#review-view').add_class('hidden')
+            app.query_one('#upload-view').remove_class('hidden')
+            app._on_upload_finished(interactive_import_tui.UploadFinishedMessage())
+            await pilot.pause()
+            await pilot.click('#import-another')
+            await pilot.pause()
+            assert cleaned == ['/tmp/download-1']
+            assert app.query_one('#source-view').display
+            assert app.focused.id == 'url-input'
+            assert app.batches == []
+            app.exit(False)
+
+    run_tui_test(scenario())
+
+
+def test_run_once_passes_sources_to_tui(monkeypatch):
     class Cfg:
         upload_media = {}
         interactive_import = {
@@ -251,25 +424,28 @@ def test_run_once_passes_prepared_batches_to_tui_and_cleans_up(monkeypatch):
             'max_similarity': 1.0,
         }
 
-    batch = make_batch(1, [])
     captured = []
-    cleaned = []
     monkeypatch.setattr(interactive_import, 'config', Cfg)
-    monkeypatch.setattr(interactive_import.import_from_url, 'download', lambda *args: ('/tmp/download', ['1.jpg']))
-    monkeypatch.setattr(interactive_import.import_from_url, 'prepare_artwork_batches', lambda *args, **kwargs: [batch])
     monkeypatch.setattr(
         interactive_import,
         'run_interactive_import_tui',
-        lambda batches, mode, policy, safety: captured.append((batches, mode, policy, safety)) or True,
+        lambda *args, **kwargs: captured.append((args, kwargs)) or True,
     )
-    monkeypatch.setattr(interactive_import.import_from_url, 'cleanup_download', cleaned.append)
 
     assert interactive_import.run_once(['https://www.pixiv.net/artworks/1'])
-    assert captured == [([batch], 'each', 'fallback', 'safe')]
-    assert cleaned == ['/tmp/download']
+    assert captured == [
+        (
+            ([], 'each', 'fallback', 'safe'),
+            {
+                'initial_urls': ['https://www.pixiv.net/artworks/1'],
+                'input_file': '',
+                'verbose': False,
+            },
+        ),
+    ]
 
 
-def test_run_once_cleans_up_when_tui_aborts(monkeypatch):
+def test_main_configures_auto_tagging_and_starts_tui(monkeypatch):
     class Cfg:
         upload_media = {}
         interactive_import = {
@@ -280,12 +456,11 @@ def test_run_once_cleans_up_when_tui_aborts(monkeypatch):
             'max_similarity': 1.0,
         }
 
-    cleaned = []
+    calls = []
     monkeypatch.setattr(interactive_import, 'config', Cfg)
-    monkeypatch.setattr(interactive_import.import_from_url, 'download', lambda *args: ('/tmp/download', ['1.jpg']))
-    monkeypatch.setattr(interactive_import.import_from_url, 'prepare_artwork_batches', lambda *args, **kwargs: [make_batch(1, [])])
-    monkeypatch.setattr(interactive_import, 'run_interactive_import_tui', lambda *args: False)
-    monkeypatch.setattr(interactive_import.import_from_url, 'cleanup_download', cleaned.append)
+    monkeypatch.setattr(interactive_import.import_from_url, 'configure_auto_tagging', lambda: calls.append('configured'))
+    monkeypatch.setattr(interactive_import, 'run_once', lambda *args: calls.append(args))
 
-    assert not interactive_import.run_once(['https://www.pixiv.net/artworks/1'])
-    assert cleaned == ['/tmp/download']
+    interactive_import.main()
+
+    assert calls == ['configured', ([], '', False)]

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import as_completed
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,6 +59,27 @@ class UploadFinishedMessage(Message):
     def __init__(self, error: str = '') -> None:
         self.error = error
         super().__init__()
+
+
+class DownloadProgressMessage(Message):
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+        super().__init__()
+
+
+class DownloadFinishedMessage(Message):
+    def __init__(self, batches: list[ArtworkBatch], download_dirs: list[str], error: str = '') -> None:
+        self.batches = batches
+        self.download_dirs = download_dirs
+        self.error = error
+        super().__init__()
+
+
+@dataclass
+class DownloadResult:
+    batches: list[ArtworkBatch]
+    download_dirs: list[str]
+    error: str = ''
 
 
 def origin_label(tag: TagCandidate, provider: str, occurrence: str = '') -> str:
@@ -150,6 +173,80 @@ def build_review_entries(batches: list[ArtworkBatch]) -> list[ReviewEntry]:
     return entries
 
 
+def download_and_prepare_sources(
+    jobs: list[tuple[list[str], str, str]],
+    download_callback: Callable,
+    prepare_callback: Callable,
+    verbose: bool,
+    workers: int,
+    add_tags: list[str],
+    default_safety: str,
+    safety_policy: str,
+    progress_callback: Callable[[dict], None],
+) -> DownloadResult:
+    """Download source jobs, report their outcomes, and prepare one review batch."""
+
+    files: list[str] = []
+    download_dirs: list[str] = []
+    errors: list[str] = []
+
+    with ThreadPoolExecutor(max_workers=min(max(1, workers), len(jobs))) as executor:
+        future_context = {}
+        for urls, input_file, label in jobs:
+            output: list[str] = []
+            future = executor.submit(
+                download_callback,
+                urls,
+                input_file,
+                verbose,
+                output_callback=output.append,
+            )
+            future_context[future] = (label, output)
+
+        for future in as_completed(future_context):
+            label, output = future_context[future]
+            for line in output:
+                progress_callback({'event': 'output', 'label': label, 'message': line})
+            try:
+                download_dir, downloaded_files = future.result()
+                if download_dir:
+                    download_dirs.append(download_dir)
+                files.extend(downloaded_files)
+                progress_callback(
+                    {
+                        'event': 'downloaded' if downloaded_files else 'empty',
+                        'label': label,
+                        'file_count': len(downloaded_files),
+                    },
+                )
+            except Exception as exception:
+                message = str(exception)
+                partial_download_dir = getattr(exception, 'download_dir', '')
+                if partial_download_dir:
+                    download_dirs.append(partial_download_dir)
+                errors.append(f'{label}: {message}')
+                progress_callback({'event': 'failed', 'label': label, 'message': message})
+
+    batches: list[ArtworkBatch] = []
+    if files:
+        progress_callback({'event': 'preparing', 'file_count': len(files)})
+        try:
+            batches = prepare_callback(
+                files,
+                add_tags=add_tags,
+                default_safety=default_safety,
+                safety_policy=safety_policy,
+            )
+            if not batches:
+                errors.append('No artwork metadata could be prepared from the downloaded files.')
+        except Exception as exception:
+            errors.append(f'Could not prepare downloaded artwork: {exception}')
+    else:
+        errors.append('No supported media files were downloaded.')
+
+    return DownloadResult(batches, download_dirs, '\n'.join(errors))
+
+
 class InteractiveImportApp(App[bool]):
     """Persistent review and upload UI for interactive imports."""
 
@@ -169,16 +266,58 @@ class InteractiveImportApp(App[bool]):
         background: $surface;
     }
 
+    #source-view {
+        align: center middle;
+        padding: 1 4;
+    }
+
     #mode-view {
         align: center middle;
         padding: 2 6;
     }
 
-    #mode-panel {
-        width: 72;
-        height: auto;
+    #source-panel, #mode-panel {
+        width: 100%;
+        max-width: 72;
         border: round $accent;
         padding: 1 2;
+    }
+
+    #source-panel {
+        height: 100%;
+        max-height: 26;
+    }
+
+    #mode-panel {
+        height: auto;
+    }
+
+    #source-actions {
+        height: 1;
+        margin-top: 0;
+    }
+
+    #source-actions Button {
+        width: 1fr;
+        margin-right: 1;
+    }
+
+    #download-progress {
+        margin-top: 0;
+    }
+
+    #download-summary {
+        height: auto;
+        min-height: 1;
+        margin-top: 0;
+    }
+
+    #download-log {
+        height: 1fr;
+        min-height: 5;
+        margin-top: 0;
+        border: round $primary;
+        padding: 0 1;
     }
 
     #mode-panel Button {
@@ -248,9 +387,14 @@ class InteractiveImportApp(App[bool]):
         padding: 0 1;
     }
 
-    #close-upload {
-        width: 100%;
+    #upload-actions {
+        height: 3;
         margin-top: 1;
+    }
+
+    #upload-actions Button {
+        width: 1fr;
+        margin-right: 1;
     }
 
     .hidden {
@@ -265,21 +409,40 @@ class InteractiveImportApp(App[bool]):
         safety_policy: str,
         default_safety: str,
         upload_callback: Callable = import_from_url.upload_batches,
+        initial_urls: list[str] | None = None,
+        input_file: str = '',
+        verbose: bool = False,
+        download_callback: Callable = import_from_url.download,
+        prepare_callback: Callable = import_from_url.prepare_artwork_batches,
+        cleanup_callback: Callable = import_from_url.cleanup_download,
     ) -> None:
         super().__init__()
-        self.batches = batches
+        self.configured_review_mode = review_mode
         self.review_mode = review_mode
+        self.initial_safety_policy = safety_policy
         self.safety_policy = safety_policy
+        self.default_safety = default_safety
         self.forced_safety = default_safety
         self.upload_callback = upload_callback
+        self.download_callback = download_callback
+        self.prepare_callback = prepare_callback
+        self.cleanup_callback = cleanup_callback
+        self.initial_urls = list(initial_urls or [])
+        self.input_file = input_file
+        self.verbose = verbose
+        self.download_active = False
+        self.download_dirs: list[str] = []
+        self.download_total = 0
+        self.download_completed = 0
 
-        self.shared_tags, self.occurrences = union_tags(batches)
-        self.shared_selected = {tag.name for tag in self.shared_tags}
-        providers = {batch.provider for batch in batches}
-        self.provider_label = next(iter(providers)) if len(providers) == 1 else 'source'
-
-        self.entries = build_review_entries(batches)
+        self.batches: list[ArtworkBatch] = []
+        self.shared_tags: list[TagCandidate] = []
+        self.occurrences = Counter()
+        self.shared_selected: set[str] = set()
+        self.provider_label = 'source'
+        self.entries: list[ReviewEntry] = []
         self.current_index = 0
+        self._load_batches(batches)
         self.visible_tag_names: set[str] = set()
         self.loading_tags = False
         self.loading_controls = False
@@ -292,7 +455,18 @@ class InteractiveImportApp(App[bool]):
         self.custom_similarity = current_similarity if current_similarity < 1 else 0.98
 
     def compose(self) -> ComposeResult:
-        with Vertical(id='mode-view'):
+        with Vertical(id='source-view', classes='hidden'):
+            with Vertical(id='source-panel'):
+                yield Static('[b]Import artwork[/b]\nEnter one or more URLs separated by spaces.')
+                yield Input(placeholder='https://www.pixiv.net/artworks/...', id='url-input', compact=True)
+                with Horizontal(id='source-actions'):
+                    yield Button('Download & review', id='download', variant='primary', compact=True)
+                    yield Button('Quit', id='quit-source', variant='error', compact=True)
+                yield ProgressBar(total=1, id='download-progress', classes='hidden')
+                yield Static('Ready.', id='download-summary')
+                yield RichLog(markup=True, wrap=True, auto_scroll=True, id='download-log')
+
+        with Vertical(id='mode-view', classes='hidden'):
             with Vertical(id='mode-panel'):
                 yield Static('[b]Choose review mode[/b]\nShared schema is the fastest path for a Pixiv batch.')
                 yield Button('Apply one shared tag and safety schema', id='mode-shared', variant='primary')
@@ -333,16 +507,191 @@ class InteractiveImportApp(App[bool]):
             yield ProgressBar(total=1, id='upload-progress')
             yield Static(id='upload-summary')
             yield RichLog(markup=True, wrap=True, auto_scroll=True, id='upload-log')
-            yield Button('Close', id='close-upload', variant='primary', classes='hidden')
+            with Horizontal(id='upload-actions', classes='hidden'):
+                yield Button('Import another', id='import-another', variant='success')
+                yield Button('Close', id='close-upload', variant='primary')
 
         yield Footer()
 
     def on_mount(self) -> None:
-        if self.review_mode in {'shared', 'each'}:
-            self._start_review(self.review_mode)
+        if self.batches:
+            self._continue_to_review()
+            return
+
+        self._show_source()
+        if self.initial_urls or self.input_file:
+            self.query_one('#url-input', Input).value = ' '.join(self.initial_urls)
+            self.call_after_refresh(self._start_download, self.initial_urls, self.input_file)
+
+    def _load_batches(self, batches: list[ArtworkBatch]) -> None:
+        self.batches = batches
+        self.shared_tags, self.occurrences = union_tags(batches)
+        self.shared_selected = {tag.name for tag in self.shared_tags}
+        providers = {batch.provider for batch in batches}
+        self.provider_label = next(iter(providers)) if len(providers) == 1 else 'source'
+        self.entries = build_review_entries(batches)
+        self.current_index = 0
+
+    def cleanup_downloads(self) -> None:
+        """Release every temporary download directory owned by this app."""
+
+        download_dirs, self.download_dirs = self.download_dirs, []
+        for download_dir in download_dirs:
+            try:
+                self.cleanup_callback(download_dir)
+            except Exception as exception:
+                logger.warning(f'Could not clean up interactive download directory "{download_dir}": {exception}')
+
+    def _reset_for_next_import(self) -> None:
+        self.cleanup_downloads()
+        self._load_batches([])
+        self.safety_policy = self.initial_safety_policy
+        self.forced_safety = self.default_safety
+        self.visible_tag_names.clear()
+        self.upload_batches = []
+        self.path_labels = {}
+        self.upload_total = 0
+        self.upload_completed = 0
+        self.upload_counts.clear()
+        self.download_total = 0
+        self.download_completed = 0
+        self.input_file = ''
+        self.query_one('#url-input', Input).value = ''
+        self.query_one('#download-progress').add_class('hidden')
+        self.query_one('#download-summary', Static).update('Ready.')
+        self.query_one('#download-log', RichLog).clear()
+        self.query_one('#upload-log', RichLog).clear()
+        self.query_one('#upload-actions').add_class('hidden')
+        self._show_source()
+
+    def _show_source(self) -> None:
+        self.review_mode = self.configured_review_mode
+        self.query_one('#mode-view').add_class('hidden')
+        self.query_one('#review-view').add_class('hidden')
+        self.query_one('#upload-view').add_class('hidden')
+        self.query_one('#source-view').remove_class('hidden')
+        self.query_one('#url-input', Input).focus()
+
+    def _continue_to_review(self) -> None:
+        self.query_one('#source-view').add_class('hidden')
+        if self.configured_review_mode in {'shared', 'each'}:
+            self._start_review(self.configured_review_mode)
+            return
+        if sum(len(batch.file_paths) for batch in self.batches) == 1:
+            self._start_review('shared')
+            return
+        self.review_mode = 'ask'
+        self.query_one('#mode-view').remove_class('hidden')
+        self.query_one('#mode-shared', Button).focus()
+
+    def _submitted_urls(self) -> list[str]:
+        return self.query_one('#url-input', Input).value.split()
+
+    def _start_download(self, urls: list[str], input_file: str = '') -> None:
+        if self.download_active:
+            return
+        if not urls and not input_file:
+            self.notify('Enter at least one URL.', severity='warning')
+            self.query_one('#url-input', Input).focus()
+            return
+
+        jobs = [([url], '', url) for url in urls]
+        if input_file:
+            jobs.append(([], input_file, f'input file: {input_file}'))
+
+        self.download_active = True
+        self.download_total = len(jobs)
+        self.download_completed = 0
+        self.query_one('#url-input', Input).disabled = True
+        self.query_one('#download', Button).disabled = True
+        self.query_one('#quit-source', Button).disabled = True
+        progress = self.query_one('#download-progress', ProgressBar)
+        progress.remove_class('hidden')
+        progress.update(total=self.download_total, progress=0)
+        self.query_one('#download-summary', Static).update(f'Downloading 0/{self.download_total} sources…')
+        log = self.query_one('#download-log', RichLog)
+        log.clear()
+        for _, _, label in jobs:
+            log.write(Text(f'… Queued {label}', style='dim'))
+        self._perform_download(jobs)
+
+    @work(thread=True, exclusive=True, group='interactive-download')
+    def _perform_download(self, jobs: list[tuple[list[str], str, str]]) -> None:
+        download_settings = getattr(config, 'import_from_url', {})
+        worker_count = max(1, int(download_settings.get('workers', 1)))
+        result = download_and_prepare_sources(
+            jobs,
+            self.download_callback,
+            self.prepare_callback,
+            self.verbose,
+            worker_count,
+            config.interactive_import.get('add_tags', []),
+            self.forced_safety,
+            self.initial_safety_policy,
+            lambda payload: self.post_message(DownloadProgressMessage(payload)),
+        )
+        self.post_message(DownloadFinishedMessage(result.batches, result.download_dirs, result.error))
+
+    @on(DownloadProgressMessage)
+    def _on_download_progress(self, message: DownloadProgressMessage) -> None:
+        payload = message.payload
+        event = payload['event']
+        log = self.query_one('#download-log', RichLog)
+
+        if event == 'preparing':
+            count = payload['file_count']
+            self.query_one('#download-summary', Static).update(f'Preparing {count} downloaded images for review…')
+            log.write(Text(f'… Preparing metadata for {count} images', style='bold cyan'))
+            return
+        if event == 'output':
+            if payload['message']:
+                log.write(Text(f'  {payload["label"]}: {payload["message"]}', style='dim'))
+            return
+
+        self.download_completed += 1
+        self.query_one('#download-progress', ProgressBar).update(progress=self.download_completed)
+        self.query_one('#download-summary', Static).update(
+            f'Downloaded {self.download_completed}/{self.download_total} sources',
+        )
+        label = payload['label']
+        if event == 'downloaded':
+            count = payload['file_count']
+            noun = 'image' if count == 1 else 'images'
+            log.write(Text(f'✓ {label} — {count} {noun}', style='bold green'))
+        elif event == 'empty':
+            log.write(Text(f'↷ {label} — no supported media', style='bold yellow'))
+        elif event == 'failed':
+            log.write(Text(f'✗ {label} — {payload["message"]}', style='bold red'))
+
+    @on(DownloadFinishedMessage)
+    def _on_download_finished(self, message: DownloadFinishedMessage) -> None:
+        self.download_active = False
+        self.download_dirs.extend(message.download_dirs)
+        self.query_one('#url-input', Input).disabled = False
+        self.query_one('#download', Button).disabled = False
+        self.query_one('#quit-source', Button).disabled = False
+
+        log = self.query_one('#download-log', RichLog)
+        if message.error:
+            for line in message.error.splitlines():
+                log.write(Text(f'✗ {line}', style='bold red'))
+        if not message.batches:
+            self.query_one('#download-summary', Static).update('Download could not be prepared. Edit the URL and retry.')
+            self.query_one('#url-input', Input).focus()
+            return
+
+        self._load_batches(message.batches)
+        image_count = sum(len(batch.file_paths) for batch in message.batches)
+        self.query_one('#download-summary', Static).update(
+            f'Ready: {len(message.batches)} artworks / {image_count} images',
+        )
+        if message.error:
+            self.notify('Some sources failed; continuing with successful downloads.', severity='warning')
+        self._continue_to_review()
 
     def _start_review(self, mode: str) -> None:
         self.review_mode = mode
+        self.query_one('#source-view').add_class('hidden')
         self.query_one('#mode-view').add_class('hidden')
         self.query_one('#review-view').remove_class('hidden')
         self._refresh_review()
@@ -615,14 +964,18 @@ class InteractiveImportApp(App[bool]):
             self.query_one('#upload-progress', ProgressBar).update(progress=self.upload_completed)
         self._update_upload_summary()
         self.query_one('#upload-header', Static).update('[b]Upload finished[/b] — review the activity log below')
-        close = self.query_one('#close-upload', Button)
-        close.remove_class('hidden')
-        close.focus()
+        self.query_one('#upload-actions').remove_class('hidden')
+        self.query_one('#import-another', Button).focus()
 
     @on(Button.Pressed)
     def _on_button(self, event: Button.Pressed) -> None:
         button_id = event.button.id
-        if button_id == 'mode-shared':
+        if button_id == 'download':
+            self._start_download(self._submitted_urls())
+        elif button_id == 'quit-source':
+            if not self.download_active:
+                self.exit(False)
+        elif button_id == 'mode-shared':
             self._start_review('shared')
         elif button_id == 'mode-each':
             self._start_review('each')
@@ -642,8 +995,14 @@ class InteractiveImportApp(App[bool]):
             self._begin_upload(self._queued_batches())
         elif button_id == 'abort':
             self.action_abort()
+        elif button_id == 'import-another':
+            self._reset_for_next_import()
         elif button_id == 'close-upload':
             self.exit(True)
+
+    @on(Input.Submitted, '#url-input')
+    def _on_url_submitted(self) -> None:
+        self._start_download(self._submitted_urls())
 
     @on(SelectionList.SelectedChanged)
     def _on_tags_changed(self) -> None:
@@ -771,9 +1130,12 @@ class InteractiveImportApp(App[bool]):
         self.query_one('#tags', SelectionList).focus()
 
     def action_primary(self) -> None:
+        if self.query_one('#source-view').display:
+            self._start_download(self._submitted_urls())
+            return
         if self.query_one('#upload-view').display:
-            if not self.query_one('#close-upload').has_class('hidden'):
-                self.exit(True)
+            if self.query_one('#upload-actions').display:
+                self._reset_for_next_import()
             return
         if self.review_mode == 'shared':
             self._begin_upload(self.batches)
@@ -781,8 +1143,14 @@ class InteractiveImportApp(App[bool]):
             self._queue_current()
 
     def action_abort(self) -> None:
+        if self.download_active:
+            self.notify('An active download cannot be interrupted safely.', severity='warning')
+            return
         if self.query_one('#upload-view').display:
-            self.notify('An active upload cannot be interrupted safely.', severity='warning')
+            if self.query_one('#upload-actions').display:
+                self.exit(True)
+            else:
+                self.notify('An active upload cannot be interrupted safely.', severity='warning')
             return
         self.exit(False)
 
@@ -792,8 +1160,19 @@ def run_interactive_import_tui(
     review_mode: str,
     safety_policy: str,
     default_safety: str,
+    initial_urls: list[str] | None = None,
+    input_file: str = '',
+    verbose: bool = False,
 ) -> bool:
-    app = InteractiveImportApp(batches, review_mode, safety_policy, default_safety)
+    app = InteractiveImportApp(
+        batches,
+        review_mode,
+        safety_policy,
+        default_safety,
+        initial_urls=initial_urls,
+        input_file=input_file,
+        verbose=verbose,
+    )
     # Ordinary stderr log sinks would paint over Textual's alternate screen.
     # Upload outcomes are delivered through structured events and rendered in
     # the activity panel instead.
@@ -801,4 +1180,5 @@ def run_interactive_import_tui(
     try:
         return bool(app.run())
     finally:
+        app.cleanup_downloads()
         logger.enable('szurubooru_toolkit')

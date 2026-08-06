@@ -265,9 +265,9 @@ Two review modes are available:
 
 * `each` stops once per downloaded image and queues each decision. Back navigation remains available until upload begins. For multipage artwork, tag and safety edits carry forward as the starting state for the next page; **Apply to artwork** queues all remaining pages of that artwork with the current settings.
 * `shared` shows the union of tags across the batch. Source tags remain only on artworks where they were detected, while selected configured or user-added tags apply to every artwork.
-* `ask` lets you choose between the two modes at runtime.
+* `ask` lets you choose between the two modes at runtime. For a single downloaded image, the redundant choice is skipped and shared review opens directly.
 
-Neither mode creates a post until upload begins. The review screen then becomes an upload dashboard with a progress bar and per-image activity log. Uploaded post IDs, exact-match skips, configured similarity skips, and failures are reported separately. Running without a URL opens a repeating URL prompt similar to the former `import.sh` helper.
+Neither mode creates a post until upload begins. URL entry, gallery-dl progress, metadata preparation, review, and upload all remain inside one persistent TUI. Uploaded post IDs, exact-match skips, configured similarity skips, and failures are reported separately. Running without a URL focuses the TUI's URL field; supplied URLs start downloading automatically. After upload, **Import another** returns to URL entry without restarting the command.
 
 __Examples__
 * `szuru-toolkit interactive-import "https://www.pixiv.net/artworks/<id>"`

@@ -4,7 +4,7 @@
 
 The implementation is now present on `feature/interactive-import`. It includes the phased importer, Pixiv artwork grouping, provenance-aware tag review, per-image/shared modes, editable safety, configuration, CLI wiring, tests, and user documentation.
 
-The review workflow now uses a persistent full-screen terminal UI with a dedicated filter, arrow-key navigation, Space toggles, inline tag/safety/duplicate controls, per-image queue and back navigation, and an upload progress/activity screen. A formal provider-adapter interface remains future work; the internal grouping and provenance models are already provider-neutral.
+The complete workflow now uses one persistent full-screen terminal UI: URL entry, gallery-dl activity, metadata preparation, mode selection, tag review, and upload progress. It includes a dedicated filter, arrow-key navigation, Space toggles, inline tag/safety/duplicate controls, per-image queue and back navigation, and an **Import another** action. A formal provider-adapter interface remains future work; the internal grouping and provenance models are already provider-neutral.
 
 ## Context
 
@@ -36,7 +36,7 @@ Use a dedicated command for the interactive workflow:
 szuru-toolkit interactive-import [OPTIONS] [URLS]...
 ```
 
-When no URL is supplied, the command should prompt for one and can return to the URL prompt after an import, similar to `import.sh`. Supplying URLs should allow a single, scriptable invocation while still opening the review UI.
+When no URL is supplied, the TUI opens with its URL field focused. Supplying URLs opens the same TUI and starts downloading automatically. After upload, **Import another** cleans the completed session and returns to URL entry.
 
 Proposed options:
 
@@ -244,7 +244,11 @@ The uploader should receive ordinary final tag strings and safety only after rev
 - [x] Keep the existing non-interactive importer using the refactored preparation/upload functions.
 - [x] Add `INTERACTIVE_IMPORT_DEFAULTS` and `[interactive_import]` configuration loading.
 - [x] Add the `interactive-import` Click command and options.
+- [x] Move URL entry, download activity, metadata preparation, and retry into the persistent TUI.
+- [x] Capture gallery-dl output without allowing it to paint over the Textual screen.
+- [x] Add **Import another** and keep temporary-download cleanup owned by the TUI session.
 - [x] Implement the review-mode selection screen.
+- [x] Skip the review-mode picker for a single image and open shared review directly.
 - [x] Implement searchable per-image tag selection and safety editing.
 - [x] Replace questionnaire prompts with one persistent full-screen review UI.
 - [x] Implement shared-schema union, occurrence counts, and overlay behavior.

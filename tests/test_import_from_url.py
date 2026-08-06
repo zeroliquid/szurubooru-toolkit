@@ -73,7 +73,7 @@ def test_gelbooru_credentials_passed_to_gallery_dl(monkeypatch):
 
     captured = {}
 
-    def fake_invoke(urls, tmp_path, params, workers=1):
+    def fake_invoke(urls, tmp_path, params, workers=1, output_callback=None):
         captured['params'] = params
         raise RuntimeError('stop after building params')  # swallowed by @logger.catch
 

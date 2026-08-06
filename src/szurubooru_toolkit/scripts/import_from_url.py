@@ -185,7 +185,12 @@ def configure_auto_tagging() -> None:
     config.auto_tagger['saucenao'] = bool(config.import_from_url['saucenao'])
 
 
-def download(urls: list[str], input_file: str = '', verbose: bool = False) -> tuple[str, list[str]]:
+def download(
+    urls: list[str],
+    input_file: str = '',
+    verbose: bool = False,
+    output_callback: Callable[[str], None] | None = None,
+) -> tuple[str, list[str]]:
     """Download URLs and return the temporary directory and ordered media files."""
 
     if input_file and not urls:
@@ -216,6 +221,7 @@ def download(urls: list[str], input_file: str = '', verbose: bool = False) -> tu
         config.import_from_url['tmp_path'],
         params,
         workers=max(1, int(config.import_from_url['workers'])),
+        output_callback=output_callback,
     )
     files = [
         file
