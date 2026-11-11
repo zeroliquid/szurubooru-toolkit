@@ -94,6 +94,15 @@ def test_source_safety_summary_counts_mixed_batch_and_fallbacks():
     )
 
 
+def test_canonical_lookup_error_summary_deduplicates_failures():
+    first = make_batch(1, [])
+    second = make_batch(2, [])
+    first.canonical_lookup_error = 'ConnectError: offline'
+    second.canonical_lookup_error = 'ConnectError: offline'
+
+    assert interactive_import_tui.canonical_lookup_error_summary([first, second]) == 'ConnectError: offline'
+
+
 def test_per_image_entries_are_independent():
     batch = make_batch(1, [TagCandidate('tagme', {TagOrigin.TOOL_ADDED})], pages=2)
 
@@ -157,11 +166,16 @@ def test_shared_review_header_shows_resolved_source_safety(monkeypatch):
     wire_tui_config(monkeypatch)
 
     async def scenario():
-        app = interactive_import_tui.InteractiveImportApp([make_batch(1, [], safety='sketchy')], 'shared', 'fallback', 'safe')
+        batch = make_batch(1, [], safety='sketchy')
+        batch.canonical_lookup_error = 'ConnectError: offline'
+        app = interactive_import_tui.InteractiveImportApp([batch], 'shared', 'fallback', 'safe')
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
+            assert app.batches[0].canonical_lookup_error == 'ConnectError: offline'
+            assert interactive_import_tui.canonical_lookup_error_summary(app.batches) == 'ConnectError: offline'
             header = app.query_one('#review-header')
             assert 'Safety: source/fallback → sketchy (pixiv)' in str(header.content)
+            assert 'Canonical tag lookup failed: ConnectError: offline' in str(header.content)
             assert app.query_one('#tags').size.height >= 28
             app.exit(False)
 

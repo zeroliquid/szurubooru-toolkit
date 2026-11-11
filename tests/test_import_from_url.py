@@ -158,3 +158,20 @@ def test_prepare_unknown_source_safety_uses_fallback(monkeypatch, tmp_path):
     assert batch.detected_safety == 'sketchy'
     assert batch.safety == 'sketchy'
     assert batch.safety_origin == 'tool: fallback'
+
+
+def test_prepare_reports_metadata_and_tag_progress(monkeypatch, tmp_path):
+    monkeypatch.setattr(import_from_url, 'convert_tags', lambda tags: [])
+    monkeypatch.setattr(import_from_url.Pixiv, 'extract_pixiv_artist', staticmethod(lambda artist, artist_id=None: None))
+    file = tmp_path / '123.jpg'
+    file.write_bytes(b'image')
+    (tmp_path / '123.jpg.json').write_text(
+        '{"file_url":"https://www.pixiv.net/artworks/123", "id":123, "tags":[], "rating":"safe"}',
+    )
+    progress = []
+
+    batches = import_from_url.prepare_artwork_batches([str(file)], progress_callback=progress.append)
+
+    assert len(batches) == 1
+    assert [event['event'] for event in progress] == ['metadata_read', 'tags_preparing', 'tags_prepared']
+    assert progress[0]['completed'] == progress[0]['total'] == 1

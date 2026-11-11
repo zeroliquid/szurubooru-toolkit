@@ -71,6 +71,7 @@ class ArtworkBatch:
     safety_origin: str
     detected_safety: str
     detected_safety_origin: str
+    canonical_lookup_error: str = ''
     selected_tags: set[str] = field(default_factory=set)
     accepted: bool = True
 
@@ -248,31 +249,65 @@ def read_downloaded_item(file_path: str) -> DownloadedItem:
     return DownloadedItem(file_path, metadata, provider, work_id, source)
 
 
+def canonical_lookup_error(provider: str) -> str:
+    """Return the optional canonical-tag service failure that affected this artwork."""
+
+    if provider not in {'fanbox', 'pixiv', 'twitter'}:
+        return ''
+    from szurubooru_toolkit import danbooru
+
+    if getattr(danbooru, 'available', True):
+        return ''
+    return getattr(danbooru, 'last_error', '') or 'Danbooru is unavailable.'
+
+
 def prepare_artwork_batches(
     files: list[str],
     add_tags: list[str] | None = None,
     default_safety: str = 'safe',
     safety_policy: str = 'fallback',
+    progress_callback: Callable[[dict], None] | None = None,
 ) -> list[ArtworkBatch]:
     """Group downloaded pages and evaluate tags and safety once per artwork."""
 
+    def report(event: str, **payload) -> None:
+        if progress_callback:
+            progress_callback({'event': event, **payload})
+
     grouped: OrderedDict[tuple[str, str], list[DownloadedItem]] = OrderedDict()
-    for file_path in files:
+    for file_number, file_path in enumerate(files, 1):
         try:
             item = read_downloaded_item(file_path)
         except Exception as error:
             logger.error(f'Could not prepare metadata for {file_path}: {error}')
+            report('metadata_failed', completed=file_number, total=len(files), file_path=file_path, message=str(error))
             continue
         grouped.setdefault((item.provider, item.work_id), []).append(item)
+        report('metadata_read', completed=file_number, total=len(files), file_path=file_path)
 
     batches = []
-    for (provider, work_id), items in grouped.items():
+    for artwork_number, ((provider, work_id), items) in enumerate(grouped.items(), 1):
         representative = items[0]
         metadata = representative.raw_metadata
+        report(
+            'tags_preparing',
+            completed=artwork_number,
+            total=len(grouped),
+            provider=provider,
+            work_id=work_id,
+        )
         try:
             tags = prepare_tag_candidates(metadata, add_tags)
         except Exception as error:
             logger.error(f'Could not prepare tags for {provider} artwork {work_id}: {error}')
+            report(
+                'tags_failed',
+                completed=artwork_number,
+                total=len(grouped),
+                provider=provider,
+                work_id=work_id,
+                message=str(error),
+            )
             continue
 
         converted_safety = convert_rating(metadata.get('rating')) if 'rating' in metadata else None
@@ -301,7 +336,16 @@ def prepare_artwork_batches(
                 safety_origin=safety_origin,
                 detected_safety=detected_safety,
                 detected_safety_origin=detected_safety_origin,
+                canonical_lookup_error=canonical_lookup_error(provider),
             )
+        )
+        report(
+            'tags_prepared',
+            completed=artwork_number,
+            total=len(grouped),
+            provider=provider,
+            work_id=work_id,
+            canonical_lookup_error=batches[-1].canonical_lookup_error,
         )
     return batches
 

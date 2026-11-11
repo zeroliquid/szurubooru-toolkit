@@ -1,10 +1,20 @@
 import httpx
 
+from szurubooru_toolkit.danbooru import USER_AGENT
 from szurubooru_toolkit.danbooru import Danbooru
 
 
 def make_danbooru(handler):
     return Danbooru(transport=httpx.MockTransport(handler))
+
+
+def test_uses_identifying_user_agent():
+    client = make_danbooru(lambda request: httpx.Response(200, json=[]))
+
+    assert client.client.headers['User-Agent'] == USER_AGENT
+    assert 'dummy' not in USER_AGENT.lower()
+    assert 'szurubooru-toolkit/' in USER_AGENT
+    assert 'github.com/reluce/szurubooru-toolkit' in USER_AGENT
 
 
 def test_search_artist_direct_hit():
@@ -70,6 +80,26 @@ def test_get_other_names_tag_not_found():
         return httpx.Response(200, json=[])
 
     assert make_danbooru(handler).get_other_names_tag('nope') is None
+
+
+def test_failed_lookup_opens_circuit_for_remaining_enrichment():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        raise httpx.ConnectError('offline', request=request)
+
+    danbooru = Danbooru(
+        transport=httpx.MockTransport(handler),
+        retry_attempts=2,
+        retry_delay=0,
+    )
+
+    assert danbooru.get_other_names_tag('original') is None
+    assert danbooru.available is False
+    assert danbooru.last_error == 'ConnectError: offline'
+    assert danbooru.search_artist('Artist') is None
+    assert len(calls) == 2
 
 
 def test_download_tags_yields_pages():

@@ -133,6 +133,12 @@ def source_safety_summary(batches: list[ArtworkBatch]) -> str:
     return summary
 
 
+def canonical_lookup_error_summary(batches: list[ArtworkBatch]) -> str:
+    """Return distinct canonical-tag service failures that affected the batch."""
+
+    return '; '.join(dict.fromkeys(batch.canonical_lookup_error for batch in batches if batch.canonical_lookup_error))
+
+
 def apply_shared_schema(
     batches: list[ArtworkBatch],
     tags: list[TagCandidate],
@@ -236,6 +242,7 @@ def download_and_prepare_sources(
                 add_tags=add_tags,
                 default_safety=default_safety,
                 safety_policy=safety_policy,
+                progress_callback=progress_callback,
             )
             if not batches:
                 errors.append('No artwork metadata could be prepared from the downloaded files.')
@@ -643,6 +650,46 @@ class InteractiveImportApp(App[bool]):
             self.query_one('#download-summary', Static).update(f'Preparing {count} downloaded images for review…')
             log.write(Text(f'… Preparing metadata for {count} images', style='bold cyan'))
             return
+        if event == 'metadata_read':
+            self.query_one('#download-summary', Static).update(
+                f'Reading metadata {payload["completed"]}/{payload["total"]} images…',
+            )
+            return
+        if event == 'metadata_failed':
+            self.query_one('#download-summary', Static).update(
+                f'Reading metadata {payload["completed"]}/{payload["total"]} images…',
+            )
+            log.write(Text(f'✗ Could not read metadata for {Path(payload["file_path"]).name}: {payload["message"]}', style='red'))
+            return
+        if event == 'tags_preparing':
+            self.query_one('#download-summary', Static).update(
+                f'Resolving tags for artwork {payload["completed"]}/{payload["total"]}…',
+            )
+            return
+        if event == 'tags_failed':
+            self.query_one('#download-summary', Static).update(
+                f'Resolving tags for artwork {payload["completed"]}/{payload["total"]}…',
+            )
+            log.write(
+                Text(
+                    f'✗ Could not resolve tags for {payload["provider"]} {payload["work_id"]}: {payload["message"]}',
+                    style='red',
+                ),
+            )
+            return
+        if event == 'tags_prepared':
+            self.query_one('#download-summary', Static).update(
+                f'Prepared artwork {payload["completed"]}/{payload["total"]}…',
+            )
+            if payload['canonical_lookup_error']:
+                log.write(
+                    Text(
+                        f'✗ Canonical tag lookup failed for {payload["provider"]} {payload["work_id"]}: '
+                        f'{payload["canonical_lookup_error"]}',
+                        style='bold red',
+                    ),
+                )
+            return
         if event == 'output':
             if payload['message']:
                 log.write(Text(f'  {payload["label"]}: {payload["message"]}', style='dim'))
@@ -749,15 +796,17 @@ class InteractiveImportApp(App[bool]):
 
         if self.review_mode == 'shared':
             image_count = sum(len(batch.file_paths) for batch in self.batches)
+            lookup_error = canonical_lookup_error_summary(self.batches)
             safety = (
                 f'source/fallback → {source_safety_summary(self.batches)}'
                 if self.safety_policy == 'fallback'
                 else f'forced → {self.forced_safety}'
             )
+            lookup_note = f'\nCanonical tag lookup failed: {lookup_error}' if lookup_error else ''
             header.update(
                 f'[b]Shared schema[/b] — {len(self.batches)} artworks / {image_count} images\n'
                 f'Safety: {safety} · Duplicate policy: {self._duplicate_label()} · '
-                f'{len(self.shared_selected)}/{len(self.shared_tags)} tags selected',
+                f'{len(self.shared_selected)}/{len(self.shared_tags)} tags selected{lookup_note}',
             )
             primary.label = f'Upload {image_count} images'
             skip.add_class('hidden')
@@ -768,11 +817,14 @@ class InteractiveImportApp(App[bool]):
             entry = self.entries[self.current_index]
             queued = sum(item.decision == 'queued' for item in self.entries)
             skipped = sum(item.decision == 'skipped' for item in self.entries)
+            lookup_note = (
+                f' · Canonical tag lookup failed: {entry.batch.canonical_lookup_error}' if entry.batch.canonical_lookup_error else ''
+            )
             header.update(
                 f'[b]Per-image review[/b] — image {self.current_index + 1}/{len(self.entries)} · '
                 f'{entry.batch.provider.title()} {entry.batch.work_id} p{entry.page_number}/{entry.page_total}\n'
                 f'{Path(entry.batch.file_paths[0]).name} · Queued: {queued} · Skipped: {skipped} · '
-                f'Duplicate policy: {self._duplicate_label()}',
+                f'Duplicate policy: {self._duplicate_label()}{lookup_note}',
             )
             primary.label = 'Queue & next' if self.current_index < len(self.entries) - 1 else 'Queue & upload'
             skip.remove_class('hidden')
@@ -1078,25 +1130,30 @@ class InteractiveImportApp(App[bool]):
         header = self.query_one('#review-header', Static)
         if self.review_mode == 'shared':
             image_count = sum(len(batch.file_paths) for batch in self.batches)
+            lookup_error = canonical_lookup_error_summary(self.batches)
             safety = (
                 f'source/fallback → {source_safety_summary(self.batches)}'
                 if self.safety_policy == 'fallback'
                 else f'forced → {self.forced_safety}'
             )
+            lookup_note = f'\nCanonical tag lookup failed: {lookup_error}' if lookup_error else ''
             header.update(
                 f'[b]Shared schema[/b] — {len(self.batches)} artworks / {image_count} images\n'
                 f'Safety: {safety} · Duplicate policy: {self._duplicate_label()} · '
-                f'{len(self.shared_selected)}/{len(self.shared_tags)} tags selected',
+                f'{len(self.shared_selected)}/{len(self.shared_tags)} tags selected{lookup_note}',
             )
         else:
             entry = self.entries[self.current_index]
             queued = sum(item.decision == 'queued' for item in self.entries)
             skipped = sum(item.decision == 'skipped' for item in self.entries)
+            lookup_note = (
+                f' · Canonical tag lookup failed: {entry.batch.canonical_lookup_error}' if entry.batch.canonical_lookup_error else ''
+            )
             header.update(
                 f'[b]Per-image review[/b] — image {self.current_index + 1}/{len(self.entries)} · '
                 f'{entry.batch.provider.title()} {entry.batch.work_id} p{entry.page_number}/{entry.page_total}\n'
                 f'{Path(entry.batch.file_paths[0]).name} · Queued: {queued} · Skipped: {skipped} · '
-                f'Duplicate policy: {self._duplicate_label()}',
+                f'Duplicate policy: {self._duplicate_label()}{lookup_note}',
             )
 
     def action_focus_filter(self) -> None:

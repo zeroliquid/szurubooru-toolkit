@@ -6,30 +6,55 @@ import httpx
 from loguru import logger
 
 
+USER_AGENT = 'szurubooru-toolkit/2.0.2 (+https://github.com/reluce/szurubooru-toolkit)'
+
+
 class Danbooru:
     """Handles the Danbooru API calls the toolkit needs (artists, wiki pages, tag export)."""
 
-    def __init__(self, transport: httpx.BaseTransport = None) -> None:
+    def __init__(
+        self,
+        transport: httpx.BaseTransport = None,
+        timeout: float = 5,
+        retry_attempts: int = 3,
+        retry_delay: float = 1,
+    ) -> None:
         """
         Initialize the Danbooru client with a pooled httpx session.
 
         Args:
             transport (httpx.BaseTransport, optional): Custom transport, used for testing.
+            timeout: Seconds to wait for one request.
+            retry_attempts: Number of attempts before marking enrichment unavailable.
+            retry_delay: Seconds to wait between attempts.
         """
 
         self.client = httpx.Client(
             base_url='https://danbooru.donmai.us',
-            headers={'User-Agent': 'Danbooru dummy agent'},
-            timeout=30,
+            headers={'User-Agent': USER_AGENT},
+            timeout=timeout,
             transport=transport,
         )
+        self.retry_attempts = max(1, retry_attempts)
+        self.retry_delay = max(0, retry_delay)
+        # Tag and artist enrichment is optional. Once the service is known to
+        # be unreachable, do not spend the retry budget again for every tag in
+        # the same import.
+        self.available = True
+        self.last_error = ''
+
+    def _mark_unavailable(self, error: Exception) -> None:
+        self.available = False
+        self.last_error = f'{type(error).__name__}: {error}'
+        logger.warning('Danbooru is unavailable; skipping remaining tag and artist lookups for this run.')
 
     def get_other_names_tag(self, other_tag: str) -> Optional[str]:
         """
         Search for the main tag name of the given tag.
 
-        This method searches for the main tag name of the supplied tag on Danbooru via its wiki pages. It retries on
-        connection errors up to 11 times with a 5 second delay. If the tag is not found, it returns None.
+        This method searches for the main tag name of the supplied tag on Danbooru via its wiki pages. A connection
+        failure retries within the configured short budget, then disables optional enrichment for the rest of the run.
+        If the tag is not found, it returns None.
 
         Args:
             other_tag (str): The tag you want to search for.
@@ -38,7 +63,11 @@ class Danbooru:
             Optional[str]: The main tag if found, None otherwise.
         """
 
-        for _ in range(1, 12):
+        if not self.available:
+            return None
+
+        failure = None
+        for _ in range(self.retry_attempts):
             try:
                 params = {'search[other_names_match]': other_tag, 'only': 'title'}
                 tag = self.client.get('/wiki_pages.json', params=params).json()[0]['title']
@@ -51,11 +80,14 @@ class Danbooru:
                 tag = None
 
                 break
-            except (TimeoutError, httpx.HTTPError):
-                logger.debug('Could not establish connection to Danbooru, trying again in 5s...')
-                sleep(5)
+            except (TimeoutError, httpx.HTTPError) as error:
+                failure = error
+                if _ < self.retry_attempts - 1:
+                    logger.debug(f'Could not establish connection to Danbooru, trying again in {self.retry_delay}s...')
+                    sleep(self.retry_delay)
         else:
             logger.debug('Could not establish connection to Danbooru. Skip search for other tag...')
+            self._mark_unavailable(failure)
             tag = None
 
         return tag
@@ -88,8 +120,9 @@ class Danbooru:
         Search for the main artist name on Danbooru and return it.
 
         This method searches for the main artist name on Danbooru by URL, or first by base name and then by other names.
-        Ambiguous URL/alias results are ranked by alias count, group membership, and record age. It retries on connection
-        errors up to 11 times with a 5 second delay. If the artist is not found, it returns None.
+        Ambiguous URL/alias results are ranked by alias count, group membership, and record age. A connection failure
+        retries within the configured short budget, then disables optional enrichment for the rest of the run. If the
+        artist is not found, it returns None.
 
         Args:
             artist (str): The artist name. Can be an alias as well.
@@ -99,8 +132,12 @@ class Danbooru:
             Optional[str]: The main artist name if found, None otherwise.
         """
 
+        if not self.available:
+            return None
+
         search_term = artist
-        for _ in range(1, 12):
+        failure = None
+        for _ in range(self.retry_attempts):
             try:
                 if by_url:
                     params = {'search[url_matches]': artist.lower(), 'search[is_deleted]': 'false'}
@@ -137,11 +174,14 @@ class Danbooru:
                 artist = None
 
                 break
-            except (TimeoutError, httpx.HTTPError):
-                logger.debug('Could not establish connection to Danbooru, trying again in 5s...')
-                sleep(5)
+            except (TimeoutError, httpx.HTTPError) as error:
+                failure = error
+                if _ < self.retry_attempts - 1:
+                    logger.debug(f'Could not establish connection to Danbooru, trying again in {self.retry_delay}s...')
+                    sleep(self.retry_delay)
         else:
             logger.debug('Could not establish connection to Danbooru. Skip this artist...')
+            self._mark_unavailable(failure)
             artist = None
 
         return artist
